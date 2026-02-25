@@ -59,8 +59,9 @@ function OnboardContent() {
                 setNeedsOnboard(true);
             } catch {
                 setNeedsOnboard(true);
+            } finally {
+                setChecking(false);
             }
-            setChecking(false);
         }
         void check();
     }, [handleFromQuery, router]);

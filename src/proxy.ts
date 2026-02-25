@@ -137,9 +137,18 @@ export async function proxy(request: NextRequest) {
 
         // Creator route check
         if (isCreatorRoute(pathname) && profile.role !== 'creator' && profile.role !== 'admin') {
-            const url = request.nextUrl.clone();
-            url.pathname = '/onboard';
-            return NextResponse.redirect(url);
+            // Allow access if a creator row already exists (role can lag behind).
+            const { data: creator } = await supabase
+                .from('creators')
+                .select('id')
+                .eq('profile_id', user.id)
+                .maybeSingle();
+
+            if (!creator) {
+                const url = request.nextUrl.clone();
+                url.pathname = '/onboard';
+                return NextResponse.redirect(url);
+            }
         }
     }
 

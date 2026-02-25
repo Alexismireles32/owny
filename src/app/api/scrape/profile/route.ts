@@ -172,7 +172,7 @@ export async function POST(request: Request) {
         // 2. Ensure profile row exists
         const { data: existingProfile } = await db
             .from('profiles')
-            .select('id')
+            .select('id, role')
             .eq('id', user.id)
             .maybeSingle();
 
@@ -182,6 +182,11 @@ export async function POST(request: Request) {
                 email: user.email || '',
                 role: 'creator',
             });
+        } else if (existingProfile.role === 'buyer') {
+            await db
+                .from('profiles')
+                .update({ role: 'creator' })
+                .eq('id', user.id);
         }
 
         // 2.5. Check if THIS USER already has a creator (idx_creators_profile is unique)
