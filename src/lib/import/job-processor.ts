@@ -64,6 +64,11 @@ async function dispatch(
             return { status: 'delegated_to_ai_pipeline' };
         }
 
+        case 'scrape_pipeline': {
+            // Scrape pipeline jobs are handled by the pipeline directly via /api/pipeline/start
+            return { status: 'delegated_to_scrape_pipeline' };
+        }
+
         default: {
             const _exhaustive: never = jobType;
             throw new Error(`Unknown job type: ${_exhaustive}`);

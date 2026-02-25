@@ -1,295 +1,151 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+// /onboard — Redirect to home page HandleInput if no creator,
+// or to dashboard if already onboarded.
+// Per SCRAPE_CREATORS_FLOW.md: TikTok handle is the single entry point.
+
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@supabase/ssr';
-
-type Step = 'handle' | 'brand';
-
-const MOOD_OPTIONS = [
-    'Motivational',
-    'Educational',
-    'Fun & Playful',
-    'Professional',
-    'Minimalist',
-    'Bold & Edgy',
-] as const;
+import { HandleInput } from '@/components/landing/HandleInput';
 
 export default function OnboardPage() {
-    const router = useRouter();
-    const [step, setStep] = useState<Step>('handle');
-    const [loading, setLoading] = useState(false);
-    const [checkingOnboard, setCheckingOnboard] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    return (
+        <Suspense fallback={null}>
+            <OnboardContent />
+        </Suspense>
+    );
+}
 
-    // Guard: if user already has a creator profile, redirect to dashboard
+function OnboardContent() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const handleFromQuery = (searchParams.get('handle') || '').replace(/^@/, '').trim().toLowerCase();
+    const [checking, setChecking] = useState(true);
+    const [needsOnboard, setNeedsOnboard] = useState(false);
+    const [autoStarting, setAutoStarting] = useState(false);
+    const [autoAttempted, setAutoAttempted] = useState(false);
+    const [autoError, setAutoError] = useState<string | null>(null);
+
     useEffect(() => {
-        async function checkExistingCreator() {
+        async function check() {
             try {
                 const supabase = createBrowserClient(
                     process.env.NEXT_PUBLIC_SUPABASE_URL!,
                     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
                 );
                 const { data: { user } } = await supabase.auth.getUser();
+
                 if (!user) {
-                    router.replace('/sign-in');
+                    router.replace(
+                        handleFromQuery
+                            ? `/sign-in?handle=${encodeURIComponent(handleFromQuery)}`
+                            : '/sign-in'
+                    );
                     return;
                 }
+
                 const { data: creator } = await supabase
                     .from('creators')
-                    .select('id')
+                    .select('id, pipeline_status')
                     .eq('profile_id', user.id)
-                    .single();
+                    .maybeSingle();
 
-                if (creator) {
-                    // Already onboarded — send to dashboard
+                if (creator && !handleFromQuery) {
                     router.replace('/dashboard');
                     return;
                 }
+
+                setNeedsOnboard(true);
             } catch {
-                // Supabase error — let them try onboarding
+                setNeedsOnboard(true);
             }
-            setCheckingOnboard(false);
+            setChecking(false);
         }
-        checkExistingCreator();
-    }, [router]);
+        void check();
+    }, [handleFromQuery, router]);
 
-    // Step 1: Identity
-    const [handle, setHandle] = useState('');
-    const [displayName, setDisplayName] = useState('');
+    useEffect(() => {
+        if (checking || !needsOnboard || !handleFromQuery || autoAttempted) return;
 
-    // Step 2: Brand DNA
-    const [primaryColor, setPrimaryColor] = useState('#6366f1');
-    const [secondaryColor, setSecondaryColor] = useState('#f59e0b');
-    const [mood, setMood] = useState<string>('Motivational');
+        async function autoStart() {
+            setAutoAttempted(true);
+            setAutoStarting(true);
+            setAutoError(null);
 
-    function handleContinueToNext() {
-        if (!handle.trim() || !displayName.trim()) {
-            setError('Handle and display name are required');
-            return;
+            try {
+                const res = await fetch('/api/scrape/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handle: handleFromQuery }),
+                });
+
+                let payload: { error?: string } | null = null;
+                try {
+                    payload = await res.json();
+                } catch {
+                    payload = null;
+                }
+
+                if (!res.ok) {
+                    throw new Error(payload?.error || 'We could not start your content analysis. Please try again.');
+                }
+
+                router.replace('/progress');
+                router.refresh();
+            } catch (error) {
+                setAutoError(error instanceof Error ? error.message : 'We could not start your content analysis.');
+                setAutoStarting(false);
+            }
         }
 
-        // Validate handle format (lowercase, alphanumeric, hyphens)
-        const handleRegex = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
-        if (!handleRegex.test(handle.toLowerCase())) {
-            setError('Handle must be 3–40 characters, lowercase letters, numbers, and hyphens only');
-            return;
-        }
+        void autoStart();
+    }, [autoAttempted, checking, handleFromQuery, needsOnboard, router]);
 
-        setError(null);
-        setStep('brand');
+    if (checking) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+                <p className="text-muted-foreground animate-pulse">Loading...</p>
+            </div>
+        );
     }
 
-    async function handleSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        setLoading(true);
-        setError(null);
-
-        try {
-            const res = await fetch('/api/creators/onboard', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    handle: handle.toLowerCase().trim(),
-                    displayName: displayName.trim(),
-                    brandTokens: {
-                        primaryColor,
-                        secondaryColor,
-                        mood,
-                    },
-                }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                setError(data.error || 'Something went wrong');
-                setLoading(false);
-                return;
-            }
-
-            router.push('/dashboard');
-            router.refresh();
-        } catch {
-            setError('Network error — please try again');
-            setLoading(false);
-        }
-    }
+    if (!needsOnboard) return null;
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
-            {checkingOnboard ? (
-                <p className="text-muted-foreground animate-pulse">Loading...</p>
-            ) : (
-                <Card className="w-full max-w-lg">
-                    <CardHeader className="text-center">
-                        <CardTitle className="text-2xl font-bold">
-                            Set up your creator profile
-                        </CardTitle>
-                        <CardDescription>
-                            {step === 'handle'
-                                ? 'Step 1 of 2 — Choose your identity'
-                                : 'Step 2 of 2 — Define your brand'}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                        {/* Progress bar */}
-                        <div className="flex gap-2">
-                            <div className={`h-1.5 flex-1 rounded-full ${step === 'handle' || step === 'brand' ? 'bg-primary' : 'bg-muted'
-                                }`} />
-                            <div className={`h-1.5 flex-1 rounded-full ${step === 'brand' ? 'bg-primary' : 'bg-muted'
-                                }`} />
-                        </div>
+        <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 px-6 py-20">
+            <div className="max-w-lg w-full text-center space-y-8">
+                <h1 className="text-4xl font-bold text-slate-900">
+                    {handleFromQuery ? `Setting up @${handleFromQuery}` : 'Connect your TikTok'}
+                </h1>
+                <p className="text-lg text-slate-500">
+                    {handleFromQuery
+                        ? 'We are preparing your storefront and analyzing your content.'
+                        : 'Enter your TikTok username to start creating digital products from your content.'}
+                </p>
 
-                        {error && (
-                            <div className="rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                                {error}
-                            </div>
-                        )}
+                {autoStarting ? (
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700 flex items-center justify-center gap-2">
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Starting your pipeline...
+                    </div>
+                ) : (
+                    <HandleInput initialHandle={handleFromQuery} />
+                )}
 
-                        {step === 'handle' ? (
-                            <div className="space-y-4">
-                                <div className="space-y-2">
-                                    <label htmlFor="handle" className="text-sm font-medium">
-                                        Handle
-                                    </label>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-sm text-muted-foreground">owny.store/c/</span>
-                                        <Input
-                                            id="handle"
-                                            placeholder="your-handle"
-                                            value={handle}
-                                            onChange={(e) => setHandle(e.target.value.toLowerCase())}
-                                            required
-                                        />
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        Your unique URL. Lowercase letters, numbers, and hyphens.
-                                    </p>
-                                </div>
+                {autoError && (
+                    <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                        {autoError}
+                    </p>
+                )}
 
-                                <div className="space-y-2">
-                                    <label htmlFor="display-name" className="text-sm font-medium">
-                                        Display Name
-                                    </label>
-                                    <Input
-                                        id="display-name"
-                                        placeholder="Your Name"
-                                        value={displayName}
-                                        onChange={(e) => setDisplayName(e.target.value)}
-                                        required
-                                    />
-                                </div>
-
-                                <Button
-                                    type="button"
-                                    className="w-full"
-                                    onClick={handleContinueToNext}
-                                >
-                                    Continue
-                                </Button>
-                            </div>
-                        ) : (
-                            <form onSubmit={handleSubmit} className="space-y-6">
-                                {/* Color pickers */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                        <label htmlFor="primary-color" className="text-sm font-medium">
-                                            Primary Color
-                                        </label>
-                                        <div className="flex items-center gap-3">
-                                            <input
-                                                id="primary-color"
-                                                type="color"
-                                                value={primaryColor}
-                                                onChange={(e) => setPrimaryColor(e.target.value)}
-                                                className="h-10 w-10 cursor-pointer rounded border-0"
-                                            />
-                                            <Input
-                                                value={primaryColor}
-                                                onChange={(e) => setPrimaryColor(e.target.value)}
-                                                className="font-mono text-sm"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label htmlFor="secondary-color" className="text-sm font-medium">
-                                            Secondary Color
-                                        </label>
-                                        <div className="flex items-center gap-3">
-                                            <input
-                                                id="secondary-color"
-                                                type="color"
-                                                value={secondaryColor}
-                                                onChange={(e) => setSecondaryColor(e.target.value)}
-                                                className="h-10 w-10 cursor-pointer rounded border-0"
-                                            />
-                                            <Input
-                                                value={secondaryColor}
-                                                onChange={(e) => setSecondaryColor(e.target.value)}
-                                                className="font-mono text-sm"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Mood selector */}
-                                <div className="space-y-2">
-                                    <label className="text-sm font-medium">Mood / Tone</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {MOOD_OPTIONS.map((m) => (
-                                            <button
-                                                key={m}
-                                                type="button"
-                                                onClick={() => setMood(m)}
-                                                className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${mood === m
-                                                    ? 'border-primary bg-primary/10 text-primary'
-                                                    : 'border-border bg-background text-muted-foreground hover:border-primary/50'
-                                                    }`}
-                                            >
-                                                {m}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Preview */}
-                                <div
-                                    className="rounded-xl p-6 text-center"
-                                    style={{
-                                        background: `linear-gradient(135deg, ${primaryColor}22, ${secondaryColor}22)`,
-                                        borderLeft: `4px solid ${primaryColor}`,
-                                    }}
-                                >
-                                    <p className="text-lg font-bold" style={{ color: primaryColor }}>
-                                        {displayName || 'Your Name'}
-                                    </p>
-                                    <p className="text-sm text-muted-foreground">
-                                        @{handle || 'your-handle'} · {mood}
-                                    </p>
-                                </div>
-
-                                <div className="flex gap-3">
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        className="flex-1"
-                                        onClick={() => setStep('handle')}
-                                    >
-                                        Back
-                                    </Button>
-                                    <Button type="submit" className="flex-1" disabled={loading}>
-                                        {loading ? 'Creating...' : 'Launch My Store'}
-                                    </Button>
-                                </div>
-                            </form>
-                        )}
-                    </CardContent>
-                </Card>
-            )}
+                <p className="text-xs text-slate-400">
+                    We&apos;ll analyze your videos and build your creator profile automatically.
+                </p>
+            </div>
         </div>
     );
 }

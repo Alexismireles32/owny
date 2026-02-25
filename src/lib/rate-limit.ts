@@ -26,6 +26,9 @@ export const RATE_LIMITS: Record<string, RateLimitConfig> = {
     'import': { limit: 3, windowMs: 24 * 60 * 60 * 1000 },   // 3/day
     'checkout': { limit: 30, windowMs: 60 * 60 * 1000 },     // 30/hour
     'auth': { limit: 10, windowMs: 60 * 1000 },              // 10/min
+    'pipeline-start': { limit: 10, windowMs: 60 * 60 * 1000 }, // 10/hour per user
+    'scrape-profile': { limit: 5, windowMs: 60 * 60 * 1000 },  // 5/hour per user
+    'scrape-prefetch': { limit: 20, windowMs: 60 * 60 * 1000 }, // 20/hour per IP
 };
 
 interface RateLimitResult {

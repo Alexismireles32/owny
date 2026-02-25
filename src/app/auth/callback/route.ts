@@ -1,10 +1,30 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+function sanitizeNextPath(next: string | null): string {
+    if (!next || !next.startsWith('/')) return '/dashboard';
+    return next;
+}
+
+function buildRedirectUrl(request: Request, origin: string, next: string): string {
+    const forwardedHost = request.headers.get('x-forwarded-host');
+    const isLocalEnv = process.env.NODE_ENV === 'development';
+
+    if (isLocalEnv) {
+        return `${origin}${next}`;
+    }
+    if (forwardedHost) {
+        return `https://${forwardedHost}${next}`;
+    }
+    return `${origin}${next}`;
+}
+
 export async function GET(request: Request) {
     const { searchParams, origin } = new URL(request.url);
     const code = searchParams.get('code');
-    const next = searchParams.get('next') ?? '/dashboard';
+    const rawNext = searchParams.get('next');
+    const next = sanitizeNextPath(rawNext);
+    const hasExplicitNext = rawNext !== null;
 
     if (code) {
         const supabase = await createClient();
@@ -17,6 +37,11 @@ export async function GET(request: Request) {
             } = await supabase.auth.getUser();
 
             if (user) {
+                // If the caller explicitly asked for a path, honor it after auth.
+                if (hasExplicitNext) {
+                    return NextResponse.redirect(buildRedirectUrl(request, origin, next));
+                }
+
                 const { data: profile } = await supabase
                     .from('profiles')
                     .select('role')
@@ -40,16 +65,7 @@ export async function GET(request: Request) {
             }
 
             // Default: redirect to next param or dashboard
-            const forwardedHost = request.headers.get('x-forwarded-host');
-            const isLocalEnv = process.env.NODE_ENV === 'development';
-
-            if (isLocalEnv) {
-                return NextResponse.redirect(`${origin}${next}`);
-            } else if (forwardedHost) {
-                return NextResponse.redirect(`https://${forwardedHost}${next}`);
-            } else {
-                return NextResponse.redirect(`${origin}${next}`);
-            }
+            return NextResponse.redirect(buildRedirectUrl(request, origin, next));
         }
     }
 

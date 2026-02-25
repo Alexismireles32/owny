@@ -19,6 +19,17 @@ export interface BrandTokensDB {
     [key: string]: unknown;
 }
 
+export type PipelineStatus =
+    | 'pending'
+    | 'scraping'
+    | 'transcribing'
+    | 'cleaning'
+    | 'clustering'
+    | 'extracting'
+    | 'ready'
+    | 'error'
+    | 'insufficient_content';
+
 export interface Creator {
     id: string;
     profile_id: string;
@@ -30,6 +41,17 @@ export interface Creator {
     featured_product_id: string | null;
     stripe_connect_account_id: string | null;
     stripe_connect_status: 'unconnected' | 'pending' | 'connected';
+    // Pipeline fields
+    pipeline_status: PipelineStatus;
+    pipeline_error: string | null;
+    follower_count: number | null;
+    following_count: number | null;
+    video_count: number | null;
+    is_verified: boolean;
+    is_claimed: boolean;
+    tiktok_url: string | null;
+    visual_dna: Record<string, unknown> | null;
+    voice_profile: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
 }
@@ -62,9 +84,21 @@ export type TranscriptSource = 'caption' | 'ai_fallback' | 'manual';
 export interface VideoTranscript {
     id: string;
     video_id: string;
+    creator_id: string | null;
+    platform: string;
     transcript_text: string;
     language: string;
     source: TranscriptSource;
+    title: string | null;
+    description: string | null;
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+    shares: number | null;
+    thumbnail_url: string | null;
+    webvtt_url: string | null;
+    duration_seconds: number | null;
+    posted_at: string | null;
     created_at: string;
 }
 
@@ -82,6 +116,22 @@ export interface ClipCardRow {
     video_id: string;
     card_json: Record<string, unknown>; // ClipCard shape
     embedding: number[] | null;
+    created_at: string;
+}
+
+// ---- CONTENT CLUSTERS ----
+
+export interface ContentCluster {
+    id: string;
+    creator_id: string;
+    label: string;
+    topic_summary: string | null;
+    video_ids: string[];
+    total_views: number;
+    video_count: number;
+    extracted_content: Record<string, unknown> | null;
+    recommended_product_type: string | null;
+    confidence_score: number;
     created_at: string;
 }
 
@@ -191,7 +241,8 @@ export type JobType =
     | 'clip_card_gen'
     | 'embedding_gen'
     | 'csv_parse'
-    | 'product_build';
+    | 'product_build'
+    | 'scrape_pipeline';
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

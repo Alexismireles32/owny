@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,19 +9,76 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import Link from 'next/link';
 
 export default function SignInPage() {
+    return (
+        <Suspense fallback={null}>
+            <SignInForm />
+        </Suspense>
+    );
+}
+
+function SignInForm() {
+    const searchParams = useSearchParams();
+    const handleFromQuery = (searchParams.get('handle') || '').replace(/^@/, '').trim().toLowerCase();
     const [activeTab, setActiveTab] = useState<'password' | 'magic'>('password');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
+    const [statusText, setStatusText] = useState<string | null>(null);
     const router = useRouter();
     const supabase = createClient();
+
+    useEffect(() => {
+        if (!handleFromQuery) return;
+
+        // Best-effort prefetch while user signs in.
+        void fetch('/api/scrape/prefetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handle: handleFromQuery }),
+        }).catch(() => {
+            // Silent warmup; primary flow remains unchanged.
+        });
+    }, [handleFromQuery]);
+
+    async function startPipelineForHandle(handle: string): Promise<boolean> {
+        setStatusText(`Setting up @${handle}...`);
+
+        try {
+            const res = await fetch('/api/scrape/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ handle }),
+            });
+
+            if (!res.ok) {
+                let payload: { error?: string } | null = null;
+                try {
+                    payload = await res.json();
+                } catch {
+                    payload = null;
+                }
+
+                setError(payload?.error || 'We could not start your content analysis. Please try again.');
+                setStatusText(null);
+                return false;
+            }
+
+            return true;
+        } catch {
+            setError('We could not start your content analysis. Please try again.');
+            setStatusText(null);
+            return false;
+        }
+    }
 
     async function handlePasswordLogin(e: React.FormEvent) {
         e.preventDefault();
         setLoading(true);
         setError(null);
+        setMessage(null);
+        setStatusText(null);
 
         const { error } = await supabase.auth.signInWithPassword({
             email,
@@ -34,6 +91,18 @@ export default function SignInPage() {
             return;
         }
 
+        if (handleFromQuery) {
+            const started = await startPipelineForHandle(handleFromQuery);
+            if (!started) {
+                setLoading(false);
+                return;
+            }
+
+            router.push('/progress');
+            router.refresh();
+            return;
+        }
+
         router.push('/dashboard');
         router.refresh();
     }
@@ -43,11 +112,16 @@ export default function SignInPage() {
         setLoading(true);
         setError(null);
         setMessage(null);
+        setStatusText(null);
+
+        const nextPath = handleFromQuery
+            ? `/onboard?handle=${encodeURIComponent(handleFromQuery)}`
+            : '/dashboard';
 
         const { error } = await supabase.auth.signInWithOtp({
             email,
             options: {
-                emailRedirectTo: `${window.location.origin}/auth/callback`,
+                emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
             },
         });
 
@@ -57,7 +131,11 @@ export default function SignInPage() {
             return;
         }
 
-        setMessage('Check your email for the login link!');
+        setMessage(
+            handleFromQuery
+                ? `Check your email for the login link. We will continue setting up @${handleFromQuery} after sign-in.`
+                : 'Check your email for the login link!'
+        );
         setLoading(false);
     }
 
@@ -76,19 +154,19 @@ export default function SignInPage() {
                     {/* Tab switcher */}
                     <div className="flex rounded-lg bg-muted p-1">
                         <button
-                            onClick={() => { setActiveTab('password'); setError(null); setMessage(null); }}
+                            onClick={() => { setActiveTab('password'); setError(null); setMessage(null); setStatusText(null); }}
                             className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${activeTab === 'password'
-                                    ? 'bg-background shadow-sm text-foreground'
-                                    : 'text-muted-foreground hover:text-foreground'
+                                ? 'bg-background shadow-sm text-foreground'
+                                : 'text-muted-foreground hover:text-foreground'
                                 }`}
                         >
                             Email & Password
                         </button>
                         <button
-                            onClick={() => { setActiveTab('magic'); setError(null); setMessage(null); }}
+                            onClick={() => { setActiveTab('magic'); setError(null); setMessage(null); setStatusText(null); }}
                             className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${activeTab === 'magic'
-                                    ? 'bg-background shadow-sm text-foreground'
-                                    : 'text-muted-foreground hover:text-foreground'
+                                ? 'bg-background shadow-sm text-foreground'
+                                : 'text-muted-foreground hover:text-foreground'
                                 }`}
                         >
                             Magic Link
@@ -96,6 +174,15 @@ export default function SignInPage() {
                     </div>
 
                     {/* Error / Success messages */}
+                    {statusText && (
+                        <div className="rounded-md bg-primary/10 px-4 py-3 text-sm text-primary flex items-center gap-2">
+                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            {statusText}
+                        </div>
+                    )}
                     {error && (
                         <div className="rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
                             {error}
@@ -163,7 +250,10 @@ export default function SignInPage() {
 
                     <div className="text-center text-sm text-muted-foreground">
                         Don&apos;t have an account?{' '}
-                        <Link href="/sign-up" className="text-primary hover:underline font-medium">
+                        <Link
+                            href={handleFromQuery ? `/sign-up?handle=${encodeURIComponent(handleFromQuery)}` : '/sign-up'}
+                            className="text-primary hover:underline font-medium"
+                        >
                             Sign Up
                         </Link>
                     </div>

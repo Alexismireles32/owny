@@ -43,6 +43,7 @@ export function BuilderPageClient({ productId, initialDsl, initialHtml, buildPac
             productId={productId}
             initialDsl={initialDsl}
             initialHtml={initialHtml}
+            initialBuildPacket={buildPacket}
             onSave={handleSave}
             onPublish={handlePublish}
         />

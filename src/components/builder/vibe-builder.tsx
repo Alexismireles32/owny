@@ -3,8 +3,9 @@
 // Vibe Builder — HTML Code Generation Edition
 // Two modes: (1) AI generates full HTML+Tailwind page, (2) User improves via chat
 // Preview: Sandboxed iframe with srcdoc for instant rendering
+// Features: SSE streaming, auto-save, device preview, quick prompt auto-submit
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
@@ -14,11 +15,20 @@ interface VibeBuilderProps {
     productId: string;
     initialDsl: ProductDSL | null;
     initialHtml: string | null;
+    initialBuildPacket: Record<string, unknown> | null;
     onSave: (dsl: ProductDSL, html: string | null) => Promise<void>;
     onPublish: () => Promise<void>;
 }
 
-export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPublish }: VibeBuilderProps) {
+type DeviceMode = 'desktop' | 'tablet' | 'mobile';
+
+const DEVICE_WIDTHS: Record<DeviceMode, string> = {
+    desktop: '100%',
+    tablet: '768px',
+    mobile: '375px',
+};
+
+export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPacket, onSave, onPublish }: VibeBuilderProps) {
     // State
     const [dsl, setDsl] = useState<ProductDSL>(() => {
         if (initialDsl && typeof initialDsl === 'object') return initialDsl as ProductDSL;
@@ -30,24 +40,56 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
     const [aiProgress, setAiProgress] = useState('');
     const [improveInput, setImproveInput] = useState('');
     const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([]);
+    const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
+    const [lastSavedHtml, setLastSavedHtml] = useState<string | null>(initialHtml);
     const chatEndRef = useRef<HTMLDivElement>(null);
+    const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const hasHtml = !!generatedHtml;
 
-    // --- Full AI Generation (HTML+Tailwind) ---
+    // --- Auto-save: debounced save after HTML changes ---
+    useEffect(() => {
+        if (!generatedHtml || generatedHtml === lastSavedHtml) return;
+
+        if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = setTimeout(async () => {
+            try {
+                await onSave(dsl, generatedHtml);
+                setLastSavedHtml(generatedHtml);
+            } catch {
+                // silent — will retry on next change
+            }
+        }, 5000); // auto-save 5s after last AI change
+
+        return () => {
+            if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        };
+    }, [generatedHtml, dsl, lastSavedHtml, onSave]);
+
+    // --- Full AI Generation (HTML+Tailwind) with SSE Streaming ---
     const handleAiGenerate = useCallback(async () => {
         setAiLoading(true);
-        setAiProgress('Generating your product page with AI...');
+        setAiProgress('Connecting to AI...');
 
         try {
-            const buildPacket = {
-                productType: dsl.product.type,
-                title: dsl.product.title,
-                audience: 'general',
-                tone: dsl.themeTokens?.mood || 'professional',
-                brandTokens: dsl.themeTokens,
-                clips: [],
-            };
+            // Use the real build packet if available (from product chat),
+            // otherwise construct a minimal one from the DSL
+            const buildPacket = initialBuildPacket && Object.keys(initialBuildPacket).length > 0
+                ? {
+                    ...initialBuildPacket,
+                    productType: initialBuildPacket.productType || dsl.product.type,
+                    title: dsl.product.title,
+                    tone: dsl.themeTokens?.mood || (initialBuildPacket.tone as string) || 'professional',
+                    brandTokens: dsl.themeTokens,
+                }
+                : {
+                    productType: dsl.product.type,
+                    title: dsl.product.title,
+                    audience: 'general',
+                    tone: dsl.themeTokens?.mood || 'professional',
+                    brandTokens: dsl.themeTokens,
+                    clips: [],
+                };
 
             const res = await fetch('/api/ai/build-product', {
                 method: 'POST',
@@ -79,13 +121,13 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
             setAiProgress(`Error: ${err instanceof Error ? err.message : 'Network error'}`);
         }
         setAiLoading(false);
-    }, [dsl]);
+    }, [dsl, initialBuildPacket]);
 
     // --- AI Improve (send current HTML + instruction) ---
-    const handleAiImprove = useCallback(async () => {
-        if (!improveInput.trim() || !generatedHtml) return;
-        const instruction = improveInput.trim();
-        setImproveInput('');
+    const handleAiImprove = useCallback(async (directPrompt?: string) => {
+        const instruction = (directPrompt || improveInput).trim();
+        if (!instruction || !generatedHtml) return;
+        if (!directPrompt) setImproveInput('');
         setAiLoading(true);
         setChatHistory((prev) => [...prev, { role: 'user', message: instruction }]);
 
@@ -125,8 +167,11 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
     const handleSave = useCallback(async () => {
         setSaving(true);
         await onSave(dsl, generatedHtml);
+        setLastSavedHtml(generatedHtml);
         setSaving(false);
     }, [dsl, generatedHtml, onSave]);
+
+    const isSaved = generatedHtml === lastSavedHtml;
 
     return (
         <div className="h-screen flex flex-col bg-slate-50 overflow-hidden">
@@ -142,10 +187,29 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                     <Separator orientation="vertical" className="h-4" />
                     <span className="font-bold text-sm">{dsl.product.title || 'Untitled Product'}</span>
                     <Badge variant="secondary" className="text-xs">{dsl.product.type}</Badge>
+                    {!isSaved && (
+                        <span className="text-xs text-amber-500 font-medium">● Unsaved</span>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={handleSave} disabled={saving}>
-                        {saving ? 'Saving…' : 'Save Draft'}
+                    {/* Device Preview Toggle */}
+                    <div className="flex items-center border rounded-lg overflow-hidden">
+                        {(['desktop', 'tablet', 'mobile'] as DeviceMode[]).map((mode) => (
+                            <button
+                                key={mode}
+                                onClick={() => setDeviceMode(mode)}
+                                className={`px-2 py-1 text-xs transition-colors ${deviceMode === mode
+                                        ? 'bg-indigo-500 text-white'
+                                        : 'text-muted-foreground hover:bg-gray-100'
+                                    }`}
+                                title={`${mode.charAt(0).toUpperCase() + mode.slice(1)} preview`}
+                            >
+                                {mode === 'desktop' ? '🖥' : mode === 'tablet' ? '📱' : '📲'}
+                            </button>
+                        ))}
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleSave} disabled={saving || isSaved}>
+                        {saving ? 'Saving…' : isSaved ? 'Saved ✓' : 'Save Draft'}
                     </Button>
                     <Button size="sm" onClick={onPublish}>Publish</Button>
                 </div>
@@ -226,8 +290,8 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                                     <div
                                         key={i}
                                         className={`text-sm rounded-lg px-3 py-2 ${msg.role === 'user'
-                                                ? 'bg-indigo-50 text-indigo-900 ml-6'
-                                                : 'bg-gray-50 text-gray-700 mr-6'
+                                            ? 'bg-indigo-50 text-indigo-900 ml-6'
+                                            : 'bg-gray-50 text-gray-700 mr-6'
                                             }`}
                                     >
                                         {msg.message}
@@ -235,7 +299,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                                 ))}
                                 {aiLoading && (
                                     <div className="bg-gray-50 text-gray-500 text-sm rounded-lg px-3 py-2 mr-6 animate-pulse">
-                                        Thinking...
+                                        {aiProgress || 'Thinking...'}
                                     </div>
                                 )}
                                 <div ref={chatEndRef} />
@@ -255,7 +319,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                                     />
                                     <Button
                                         size="sm"
-                                        onClick={handleAiImprove}
+                                        onClick={() => handleAiImprove()}
                                         disabled={aiLoading || !improveInput.trim()}
                                     >
                                         Send
@@ -265,10 +329,9 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                                     {QUICK_PROMPTS.map((prompt) => (
                                         <button
                                             key={prompt}
-                                            onClick={() => {
-                                                setImproveInput(prompt);
-                                            }}
-                                            className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-600 transition-colors"
+                                            onClick={() => handleAiImprove(prompt)}
+                                            disabled={aiLoading}
+                                            className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-600 transition-colors disabled:opacity-40"
                                         >
                                             {prompt}
                                         </button>
@@ -282,13 +345,22 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                 {/* Right Panel: Preview (iframe or empty state) */}
                 <main className="flex-1 overflow-hidden bg-gray-100 flex items-stretch justify-center p-4">
                     {hasHtml ? (
-                        <div className="w-full max-w-5xl bg-white rounded-xl shadow-lg overflow-hidden flex flex-col">
+                        <div
+                            className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col transition-all duration-300"
+                            style={{
+                                width: DEVICE_WIDTHS[deviceMode],
+                                maxWidth: '100%',
+                                margin: deviceMode !== 'desktop' ? '0 auto' : undefined,
+                            }}
+                        >
                             {/* Preview header */}
                             <div className="h-8 bg-gray-50 border-b flex items-center px-4 gap-2 flex-shrink-0">
                                 <div className="w-3 h-3 rounded-full bg-red-400" />
                                 <div className="w-3 h-3 rounded-full bg-yellow-400" />
                                 <div className="w-3 h-3 rounded-full bg-green-400" />
-                                <span className="text-xs text-gray-400 ml-2">Live Preview</span>
+                                <span className="text-xs text-gray-400 ml-2">
+                                    Live Preview — {deviceMode.charAt(0).toUpperCase() + deviceMode.slice(1)}
+                                </span>
                             </div>
                             {/* iframe preview */}
                             <iframe
@@ -300,23 +372,39 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center text-center max-w-md">
-                            <div className="text-6xl mb-4">🎨</div>
-                            <h2 className="text-xl font-bold text-gray-800 mb-2">
-                                Create Your Product Page
-                            </h2>
-                            <p className="text-muted-foreground mb-6">
-                                Set your title and mood in the sidebar, then click "Generate with AI" to create a
-                                stunning product page with beautiful design, animations, and interactivity.
-                            </p>
-                            <Button
-                                className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600 px-8 py-3"
-                                onClick={handleAiGenerate}
-                                disabled={aiLoading}
-                            >
-                                {aiLoading ? '✨ Generating...' : '✨ Generate with AI'}
-                            </Button>
-                            {aiProgress && (
-                                <p className="text-sm text-muted-foreground mt-4">{aiProgress}</p>
+                            {aiLoading ? (
+                                // Skeleton loading state
+                                <div className="w-full max-w-lg space-y-4 animate-pulse">
+                                    <div className="h-48 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-xl" />
+                                    <div className="h-6 bg-gray-200 rounded w-3/4 mx-auto" />
+                                    <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto" />
+                                    <div className="space-y-2 mt-6">
+                                        <div className="h-4 bg-gray-200 rounded w-full" />
+                                        <div className="h-4 bg-gray-200 rounded w-5/6" />
+                                        <div className="h-4 bg-gray-200 rounded w-4/6" />
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mt-4">
+                                        {aiProgress || '✨ AI is building your product page...'}
+                                    </p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="text-6xl mb-4">🎨</div>
+                                    <h2 className="text-xl font-bold text-gray-800 mb-2">
+                                        Create Your Product Page
+                                    </h2>
+                                    <p className="text-muted-foreground mb-6">
+                                        Set your title and mood in the sidebar, then click &quot;Generate with AI&quot; to create a
+                                        stunning product page with beautiful design, animations, and interactivity.
+                                    </p>
+                                    <Button
+                                        className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600 px-8 py-3"
+                                        onClick={handleAiGenerate}
+                                        disabled={aiLoading}
+                                    >
+                                        ✨ Generate with AI
+                                    </Button>
+                                </>
                             )}
                         </div>
                     )}
@@ -326,7 +414,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, onSave, onPubl
     );
 }
 
-// Quick improvement prompts
+// Quick improvement prompts — auto-submit on click
 const QUICK_PROMPTS = [
     'Make it bolder',
     'Add more sections',

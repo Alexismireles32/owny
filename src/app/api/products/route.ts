@@ -28,10 +28,7 @@ export async function GET() {
 
     const { data: products, error } = await supabase
         .from('products')
-        .select(`
-            *,
-            product_versions(id, version_number, published_at, created_at)
-        `)
+        .select('id, title, slug, type, status, description, access_type, price_cents, currency, active_version_id, created_at, updated_at')
         .eq('creator_id', creator.id)
         .order('created_at', { ascending: false });
 
