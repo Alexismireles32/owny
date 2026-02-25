@@ -68,11 +68,15 @@ function ConnectStripeContent() {
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
             <header className="border-b bg-white/80 backdrop-blur-sm">
-                <div className="container mx-auto flex h-16 items-center px-4">
-                    <h1 className="text-xl font-bold">
-                        <span className="text-primary">Owny</span>
-                        <span className="text-muted-foreground ml-2 text-sm font-normal">Stripe Connect</span>
-                    </h1>
+                <div className="container mx-auto flex h-16 items-center justify-between px-4">
+                    <div className="flex items-center gap-3">
+                        <a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                            ← Dashboard
+                        </a>
+                        <span className="text-muted-foreground">|</span>
+                        <h1 className="text-sm font-medium">Stripe Connect</h1>
+                    </div>
+                    <span className="text-xl font-bold text-primary">Owny</span>
                 </div>
             </header>
 

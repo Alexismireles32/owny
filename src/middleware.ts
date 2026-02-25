@@ -10,6 +10,7 @@ const PUBLIC_ROUTES = [
     '/sign-up',
     '/auth/callback',
     '/legal',
+    '/sandbox',
 ];
 
 // Route prefixes that are public (dynamic segments)

@@ -17,24 +17,35 @@ export async function GET() {
     }
 
     // Fetch active entitlements with product details
-    const { data: entitlements, error } = await supabase
-        .from('entitlements')
-        .select(`
-            id,
-            status,
-            granted_via,
-            created_at,
-            products(
-                id, slug, type, title, description, price_cents, currency,
-                creators(handle, display_name, avatar_url)
-            )
-        `)
-        .eq('buyer_profile_id', user.id)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false });
+    let entitlements: Record<string, unknown>[] | null = null;
 
-    if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+    try {
+        const { data, error } = await supabase
+            .from('entitlements')
+            .select(`
+                id,
+                status,
+                granted_via,
+                created_at,
+                products(
+                    id, slug, type, title, description, price_cents, currency,
+                    creators(handle, display_name, avatar_url)
+                )
+            `)
+            .eq('buyer_profile_id', user.id)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            // Table may not exist yet or RLS blocks — return empty
+            console.warn('[/api/library] entitlements query error:', error.message);
+            return NextResponse.json({ entitlements: [] });
+        }
+
+        entitlements = data;
+    } catch (err) {
+        console.warn('[/api/library] unexpected error:', err);
+        return NextResponse.json({ entitlements: [] });
     }
 
     // Fetch progress for each product
@@ -68,6 +79,6 @@ export async function GET() {
         entitlements: entitlements?.map((e) => ({
             ...e,
             progress: progressMap[(e.products as unknown as { id: string })?.id] || null,
-        })),
+        })) || [],
     });
 }

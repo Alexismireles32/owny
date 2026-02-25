@@ -53,7 +53,7 @@ export async function POST(
     const nextVersionNumber = (latestVersion?.version_number || 0) + 1;
 
     const body = await request.json();
-    const { buildPacket = {}, dslJson = {}, sourceVideoIds = [] } = body;
+    const { buildPacket = {}, dslJson = {}, generatedHtml = null, sourceVideoIds = [] } = body;
 
     const { data: version, error } = await supabase
         .from('product_versions')
@@ -62,6 +62,7 @@ export async function POST(
             version_number: nextVersionNumber,
             build_packet: buildPacket,
             dsl_json: dslJson,
+            generated_html: generatedHtml,
             source_video_ids: sourceVideoIds,
         })
         .select()

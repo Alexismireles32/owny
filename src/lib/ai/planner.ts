@@ -83,7 +83,7 @@ ${JSON.stringify(sourcesContext, null, 1)}
 Generate a complete Build Packet JSON for this product.`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 8192,
         system: PLANNER_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userMessage }],

@@ -65,17 +65,19 @@ export default async function ProductPage({ params }: Props) {
     // Track page view (fire-and-forget)
     trackPageView({ path: `/p/${slug}`, productId: product.id, creatorId: product.creator_id });
 
-    // Fetch active version DSL
+    // Fetch active version DSL + HTML
     let dsl: ProductDSL | null = null;
+    let generatedHtml: string | null = null;
     if (product.active_version_id) {
         const { data: version } = await supabase
             .from('product_versions')
-            .select('dsl_json')
+            .select('dsl_json, generated_html')
             .eq('id', product.active_version_id)
             .single();
         if (version?.dsl_json && typeof version.dsl_json === 'object') {
             dsl = version.dsl_json as unknown as ProductDSL;
         }
+        generatedHtml = (version as unknown as { generated_html: string | null })?.generated_html || null;
     }
 
     const creator = product.creators as unknown as {
@@ -89,7 +91,59 @@ export default async function ProductPage({ params }: Props) {
     const primaryColor = creator?.brand_tokens?.primaryColor || '#6366f1';
     const isFree = !product.price_cents || product.price_cents === 0;
 
-    // Theme tokens for DSL rendering
+    // If we have generated HTML, render it as the full page experience
+    if (generatedHtml) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
+                {/* Nav */}
+                <header className="border-b bg-white/80 backdrop-blur-sm">
+                    <div className="container mx-auto flex h-14 items-center justify-between px-4">
+                        <Link
+                            href={`/c/${creator?.handle || ''}`}
+                            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            ← Back to {creator?.display_name || 'Creator'}
+                        </Link>
+                        <span className="text-sm font-semibold">Owny</span>
+                    </div>
+                </header>
+
+                {/* Full HTML preview */}
+                <main className="flex-1">
+                    <iframe
+                        srcDoc={generatedHtml}
+                        sandbox="allow-scripts"
+                        className="w-full border-0"
+                        style={{ minHeight: '80vh' }}
+                        title={product.title}
+                    />
+                </main>
+
+                {/* CTA (outside iframe for payment flow) */}
+                <div className="bg-white border-t py-8">
+                    <div className="container mx-auto max-w-md text-center px-4">
+                        <p className="text-3xl font-bold mb-4" style={{ color: primaryColor }}>
+                            {isFree ? 'Free' : formatPrice(product.price_cents, product.currency)}
+                        </p>
+                        <Button
+                            size="lg"
+                            className="w-full max-w-xs text-white"
+                            style={{ backgroundColor: primaryColor }}
+                        >
+                            {isFree ? 'Get Free Access' : 'Buy Now'}
+                        </Button>
+                        <p className="text-xs text-muted-foreground mt-3">
+                            Secure checkout powered by Stripe
+                        </p>
+                    </div>
+                </div>
+
+                <PublicFooter />
+            </div>
+        );
+    }
+
+    // Theme tokens for legacy DSL rendering
     const themeTokens: ThemeTokens = {
         primaryColor: creator?.brand_tokens?.primaryColor || '#6366f1',
         secondaryColor: creator?.brand_tokens?.secondaryColor || '#8b5cf6',

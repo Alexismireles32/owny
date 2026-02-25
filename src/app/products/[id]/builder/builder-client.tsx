@@ -1,7 +1,7 @@
 'use client';
 
 // Client wrapper for the Vibe Builder page
-// Handles save (POST version) and publish (POST publish)
+// Handles save (POST version with DSL + HTML) and publish
 
 import { useRouter } from 'next/navigation';
 import { VibeBuilder } from '@/components/builder/vibe-builder';
@@ -12,18 +12,20 @@ interface Props {
     productTitle: string;
     productType: string;
     initialDsl: ProductDSL | null;
+    initialHtml: string | null;
     buildPacket: Record<string, unknown> | null;
 }
 
-export function BuilderPageClient({ productId, initialDsl, buildPacket }: Props) {
+export function BuilderPageClient({ productId, initialDsl, initialHtml, buildPacket }: Props) {
     const router = useRouter();
 
-    async function handleSave(dsl: ProductDSL) {
+    async function handleSave(dsl: ProductDSL, html: string | null) {
         await fetch(`/api/products/${productId}/versions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 dslJson: dsl,
+                generatedHtml: html,
                 buildPacket: buildPacket || {},
             }),
         });
@@ -40,6 +42,7 @@ export function BuilderPageClient({ productId, initialDsl, buildPacket }: Props)
         <VibeBuilder
             productId={productId}
             initialDsl={initialDsl}
+            initialHtml={initialHtml}
             onSave={handleSave}
             onPublish={handlePublish}
         />

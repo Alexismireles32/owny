@@ -95,8 +95,8 @@ export function ContentProgressTracker({
                         <CardContent className="flex items-start gap-3 py-4">
                             <div
                                 className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors ${isComplete
-                                        ? 'border-transparent text-white'
-                                        : 'border-muted-foreground/30'
+                                    ? 'border-transparent text-white'
+                                    : 'border-muted-foreground/30'
                                     }`}
                                 style={isComplete ? { backgroundColor: primaryColor } : {}}
                             >
@@ -145,17 +145,29 @@ export function ContentProgressTracker({
  */
 function extractBlocks(dslJson: Record<string, unknown>): BlockItem[] {
     // Try to extract from DSL pages → blocks
+    // PRD §6.2: block content lives inside block.props (headline, heading, title, body, etc.)
     const pages = dslJson.pages as Array<Record<string, unknown>> | undefined;
     if (pages) {
         const blocks: BlockItem[] = [];
         for (const page of pages) {
+            // Skip public/sales pages — only track progress for content pages
+            if (page.accessRule === 'public') continue;
+
             const pageBlocks = page.blocks as Array<Record<string, unknown>> | undefined;
             if (pageBlocks) {
                 for (const block of pageBlocks) {
+                    const props = (block.props || {}) as Record<string, unknown>;
                     blocks.push({
                         id: (block.id as string) || `block-${blocks.length}`,
-                        title: (block.heading as string) || (block.title as string) || `Block ${blocks.length + 1}`,
-                        description: (block.body as string) || (block.description as string) || undefined,
+                        title: (props.headline as string)
+                            || (props.heading as string)
+                            || (props.title as string)
+                            || (props.label as string)
+                            || `Block ${blocks.length + 1}`,
+                        description: (props.body as string)
+                            || (props.description as string)
+                            || (props.objective as string)
+                            || undefined,
                     });
                 }
             }
@@ -166,11 +178,17 @@ function extractBlocks(dslJson: Record<string, unknown>): BlockItem[] {
     // Fallback: try top-level blocks array
     const topBlocks = dslJson.blocks as Array<Record<string, unknown>> | undefined;
     if (topBlocks) {
-        return topBlocks.map((b, i) => ({
-            id: (b.id as string) || `block-${i}`,
-            title: (b.heading as string) || (b.title as string) || `Block ${i + 1}`,
-            description: (b.body as string) || undefined,
-        }));
+        return topBlocks.map((b, i) => {
+            const props = (b.props || {}) as Record<string, unknown>;
+            return {
+                id: (b.id as string) || `block-${i}`,
+                title: (props.headline as string)
+                    || (props.heading as string)
+                    || (props.title as string)
+                    || `Block ${i + 1}`,
+                description: (props.body as string) || undefined,
+            };
+        });
     }
 
     return [];

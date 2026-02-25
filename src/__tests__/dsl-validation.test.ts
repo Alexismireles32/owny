@@ -1,7 +1,15 @@
 // Test: DSL schema validation
-// PRD requires JSON schema validation on all AI outputs
+// PRD §6.2 requires JSON schema validation on all AI outputs
+// Block types MUST match PRD §6.2 exactly (PascalCase)
 
 import { describe, it, expect } from 'vitest';
+
+// PRD §6.2 — all 15 allowed block types
+const VALID_BLOCK_TYPES = [
+    'Hero', 'TextSection', 'Bullets', 'Steps', 'Checklist',
+    'Image', 'Testimonial', 'FAQ', 'CTA', 'Pricing',
+    'Divider', 'ModuleHeader', 'LessonContent', 'DayHeader', 'DownloadButton',
+];
 
 // Inline validateProductDSL logic for unit testing (mirrors src/lib/ai/router.ts)
 function validateProductDSL(dsl: Record<string, unknown>): { valid: boolean; errors: string[] } {
@@ -42,13 +50,8 @@ function validateProductDSL(dsl: Record<string, unknown>): { valid: boolean; err
                     }
                     blockIds.add(block.id);
 
-                    // Validate known block types
-                    const validTypes = [
-                        'hero', 'text', 'image', 'video', 'list', 'callout',
-                        'quote', 'divider', 'spacer', 'cta', 'faq',
-                        'testimonial', 'pricing', 'checklist', 'accordion',
-                    ];
-                    if (block.type && !validTypes.includes(block.type)) {
+                    // Validate known block types (PRD §6.2)
+                    if (block.type && !VALID_BLOCK_TYPES.includes(block.type)) {
                         errors.push(`Invalid block type: "${block.type}"`);
                     }
                 }
@@ -60,36 +63,36 @@ function validateProductDSL(dsl: Record<string, unknown>): { valid: boolean; err
 }
 
 describe('DSL Schema Validation', () => {
-    it('should pass for a valid DSL', () => {
+    it('should pass for a valid DSL with PRD block types', () => {
         const validDSL = {
             pages: [
                 {
-                    id: 'cover',
-                    type: 'cover',
+                    id: 'pg_sales',
+                    type: 'sales',
                     blocks: [
                         {
-                            id: 'b1',
-                            type: 'hero',
+                            id: 'blk_hero0001',
+                            type: 'Hero',
                             variant: 'centered',
-                            props: { headline: 'Test Product' },
+                            props: { headline: 'Test Product', subhead: 'A great product' },
                         },
                     ],
                 },
                 {
-                    id: 'content-1',
+                    id: 'pg_content1',
                     type: 'content',
                     blocks: [
                         {
-                            id: 'b2',
-                            type: 'text',
-                            variant: 'body',
-                            props: { content: 'Hello world' },
+                            id: 'blk_text0001',
+                            type: 'TextSection',
+                            variant: 'standard',
+                            props: { heading: 'Introduction', body: 'Hello world' },
                         },
                         {
-                            id: 'b3',
-                            type: 'list',
-                            variant: 'numbered',
-                            props: { items: ['item 1', 'item 2'] },
+                            id: 'blk_bull0001',
+                            type: 'Bullets',
+                            variant: 'checkmark',
+                            props: { heading: 'Key Points', items: ['item 1', 'item 2'] },
                         },
                     ],
                 },
@@ -131,6 +134,24 @@ describe('DSL Schema Validation', () => {
         expect(result.errors).toContain('Invalid block type: "nonexistent_block"');
     });
 
+    it('should fail for lowercase block types (must be PascalCase per PRD)', () => {
+        const dsl = {
+            pages: [
+                {
+                    id: 'p1',
+                    type: 'content',
+                    blocks: [
+                        { id: 'b1', type: 'hero', props: {} },
+                    ],
+                },
+            ],
+        };
+
+        const result = validateProductDSL(dsl);
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContain('Invalid block type: "hero"');
+    });
+
     it('should fail for duplicate block IDs', () => {
         const dsl = {
             pages: [
@@ -138,8 +159,8 @@ describe('DSL Schema Validation', () => {
                     id: 'p1',
                     type: 'content',
                     blocks: [
-                        { id: 'b1', type: 'text', props: {} },
-                        { id: 'b1', type: 'hero', props: {} },
+                        { id: 'b1', type: 'TextSection', props: {} },
+                        { id: 'b1', type: 'Hero', props: {} },
                     ],
                 },
             ],
@@ -155,7 +176,7 @@ describe('DSL Schema Validation', () => {
             pages: [
                 {
                     type: 'content',
-                    blocks: [{ id: 'b1', type: 'text', props: {} }],
+                    blocks: [{ id: 'b1', type: 'TextSection', props: {} }],
                 },
             ],
         };
@@ -171,7 +192,7 @@ describe('DSL Schema Validation', () => {
                 {
                     id: 'p1',
                     type: 'content',
-                    blocks: [{ type: 'text', props: {} }],
+                    blocks: [{ type: 'TextSection', props: {} }],
                 },
             ],
         };
@@ -181,21 +202,16 @@ describe('DSL Schema Validation', () => {
         expect(result.errors).toContain('Each block must have a string id');
     });
 
-    it('should validate all 15 supported block types', () => {
-        const types = [
-            'hero', 'text', 'image', 'video', 'list', 'callout',
-            'quote', 'divider', 'spacer', 'cta', 'faq',
-            'testimonial', 'pricing', 'checklist', 'accordion',
-        ];
-
+    it('should validate all 15 PRD block types', () => {
         const dsl = {
             pages: [
                 {
                     id: 'p1',
                     type: 'content',
-                    blocks: types.map((t, i) => ({
-                        id: `b${i}`,
+                    blocks: VALID_BLOCK_TYPES.map((t, i) => ({
+                        id: `blk_${String(i).padStart(4, '0')}`,
                         type: t,
+                        variant: 'standard',
                         props: {},
                     })),
                 },
@@ -204,5 +220,21 @@ describe('DSL Schema Validation', () => {
 
         const result = validateProductDSL(dsl);
         expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should reject blocks with empty type string', () => {
+        const dsl = {
+            pages: [
+                {
+                    id: 'p1',
+                    type: 'content',
+                    blocks: [{ id: 'b1', type: '', props: {} }],
+                },
+            ],
+        };
+
+        const result = validateProductDSL(dsl);
+        expect(result.valid).toBe(false);
     });
 });

@@ -144,7 +144,7 @@ export async function POST(request: Request) {
             },
         });
     } catch (err) {
-        console.error('Plan product error:', err);
+        log.error('Plan product error', { error: err instanceof Error ? err.message : 'Unknown' });
         return NextResponse.json(
             { error: err instanceof Error ? err.message : 'Failed to generate plan' },
             { status: 500 }

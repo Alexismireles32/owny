@@ -31,7 +31,7 @@ export default async function ProductDetailPage({ params }: Props) {
 
     if (!creator) redirect('/onboard');
 
-    const { data: product } = await supabase
+    const { data: product, error: productError } = await supabase
         .from('products')
         .select(`
             *,
@@ -39,6 +39,14 @@ export default async function ProductDetailPage({ params }: Props) {
         `)
         .eq('id', id)
         .single();
+
+    // If query errored (likely RLS/session issue), redirect instead of hard 404
+    if (productError && !product) {
+        console.error('Product query error:', productError.message, { id, creatorId: creator.id });
+        // If PGRST116 (no rows), the product genuinely doesn't exist or RLS blocks it
+        // Redirect to products list with a message rather than showing a 404 page
+        redirect('/products');
+    }
 
     if (!product || product.creator_id !== creator.id) {
         notFound();
@@ -56,8 +64,8 @@ export default async function ProductDetailPage({ params }: Props) {
             <header className="border-b bg-white/80 backdrop-blur-sm">
                 <div className="container mx-auto flex h-16 items-center justify-between px-4">
                     <div className="flex items-center gap-3">
-                        <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
-                            ← Dashboard
+                        <Link href="/products" className="text-sm text-muted-foreground hover:text-foreground">
+                            ← Products
                         </Link>
                         <Separator orientation="vertical" className="h-4" />
                         <h1 className="text-sm font-medium truncate max-w-xs">{product.title}</h1>
@@ -128,8 +136,8 @@ export default async function ProductDetailPage({ params }: Props) {
                                         <div
                                             key={v.id}
                                             className={`flex items-center justify-between px-3 py-2 rounded-lg ${v.id === product.active_version_id
-                                                    ? 'bg-primary/5 border border-primary/20'
-                                                    : 'bg-muted/50'
+                                                ? 'bg-primary/5 border border-primary/20'
+                                                : 'bg-muted/50'
                                                 }`}
                                         >
                                             <div className="flex items-center gap-2">
@@ -157,11 +165,13 @@ export default async function ProductDetailPage({ params }: Props) {
                         <p className="text-3xl mb-2">🤖</p>
                         <p className="font-medium">AI Product Builder</p>
                         <p className="text-sm text-muted-foreground mt-1">
-                            Coming in M8–M10. The AI will generate content for this product from your video library.
+                            Design and customize your product pages with the Vibe Builder.
                         </p>
-                        <Button variant="outline" className="mt-4" disabled>
-                            Generate with AI
-                        </Button>
+                        <Link href={`/products/${product.id}/builder`}>
+                            <Button className="mt-4">
+                                Open Builder
+                            </Button>
+                        </Link>
                     </CardContent>
                 </Card>
             </main>

@@ -76,7 +76,7 @@ export default function NewProductPage() {
             if (!res.ok) {
                 setError(data.error || 'Failed to create product');
             } else {
-                router.push(`/products/${data.product.id}`);
+                router.push(`/products/${data.product.id}/builder`);
             }
         } catch {
             setError('Network error');
@@ -94,7 +94,7 @@ export default function NewProductPage() {
                         <span className="text-primary">Owny</span>
                         <span className="text-muted-foreground ml-2 text-sm font-normal">New Product</span>
                     </h1>
-                    <Button variant="outline" onClick={() => router.push('/dashboard')}>
+                    <Button variant="outline" onClick={() => router.push('/products')}>
                         Cancel
                     </Button>
                 </div>
@@ -107,10 +107,10 @@ export default function NewProductPage() {
                         <div key={s} className="flex items-center gap-2 flex-1">
                             <div
                                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${step === s
-                                        ? 'bg-primary text-primary-foreground'
-                                        : i < ['type', 'details', 'review'].indexOf(step)
-                                            ? 'bg-green-500 text-white'
-                                            : 'bg-muted text-muted-foreground'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : i < ['type', 'details', 'review'].indexOf(step)
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-muted text-muted-foreground'
                                     }`}
                             >
                                 {i + 1}
@@ -142,8 +142,8 @@ export default function NewProductPage() {
                                     key={type.value}
                                     onClick={() => setProductType(type.value)}
                                     className={`rounded-xl border p-5 text-left transition-all hover:shadow-md ${productType === type.value
-                                            ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
-                                            : 'bg-white hover:border-primary/30'
+                                        ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                                        : 'bg-white hover:border-primary/30'
                                         }`}
                                 >
                                     <div className="text-2xl mb-2">{type.icon}</div>
@@ -217,8 +217,8 @@ export default function NewProductPage() {
                                                 key={option.value}
                                                 onClick={() => setAccessType(option.value)}
                                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${accessType === option.value
-                                                        ? 'bg-primary text-primary-foreground'
-                                                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                                                    ? 'bg-primary text-primary-foreground'
+                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                                                     }`}
                                             >
                                                 {option.label}

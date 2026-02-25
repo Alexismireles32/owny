@@ -2,6 +2,7 @@
 
 // DSL → React block renderer
 // PRD §6.2 — Renders all 15 block types with variant support
+// Tailwind-first rendering: Tailwind for layout/polish, style={{}} for dynamic theme colors
 
 import type { DSLBlock, ProductDSL } from '@/types/product-dsl';
 
@@ -12,18 +13,34 @@ interface BlockRendererProps {
     onSelect?: (blockId: string) => void;
 }
 
-export function BlockRenderer({ block, theme, isSelected, onSelect }: BlockRendererProps) {
-    const style: React.CSSProperties = {
-        cursor: onSelect ? 'pointer' : undefined,
-        outline: isSelected ? `2px solid ${theme.primaryColor}` : undefined,
-        outlineOffset: isSelected ? '2px' : undefined,
-        borderRadius: radiusMap[theme.borderRadius] || '8px',
-        transition: 'outline 0.15s ease',
-    };
+const radiusClass: Record<string, string> = {
+    none: 'rounded-none',
+    sm: 'rounded',
+    md: 'rounded-lg',
+    lg: 'rounded-2xl',
+    full: 'rounded-full',
+};
 
+const shadowClass: Record<string, string> = {
+    none: 'shadow-none',
+    sm: 'shadow-sm',
+    md: 'shadow-md',
+    lg: 'shadow-lg',
+};
+
+export function BlockRenderer({ block, theme, isSelected, onSelect }: BlockRendererProps) {
     return (
         <div
-            style={style}
+            className={`
+                transition-all duration-200
+                ${isSelected ? 'ring-2 ring-offset-2' : ''}
+                ${onSelect ? 'cursor-pointer' : ''}
+                ${radiusClass[theme.borderRadius] || 'rounded-lg'}
+            `}
+            style={{
+                '--tw-ring-color': theme.primaryColor,
+                outlineOffset: isSelected ? '2px' : undefined,
+            } as React.CSSProperties}
             onClick={(e) => {
                 e.stopPropagation();
                 onSelect?.(block.id);
@@ -34,31 +51,45 @@ export function BlockRenderer({ block, theme, isSelected, onSelect }: BlockRende
     );
 }
 
-const radiusMap: Record<string, string> = {
-    none: '0', sm: '4px', md: '8px', lg: '16px', full: '9999px',
-};
-
 function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.ReactNode {
     switch (block.type) {
         case 'Hero':
             return (
-                <div style={{
-                    padding: '3rem 2rem',
-                    textAlign: block.variant === 'centered' ? 'center' : 'left',
-                    background: block.styleOverrides?.backgroundColor || `linear-gradient(135deg, ${theme.primaryColor}15, ${theme.secondaryColor}15)`,
-                }}>
-                    <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem', color: theme.textColor }}>
+                <div
+                    className={`px-8 py-12 ${block.variant === 'centered' ? 'text-center' : 'text-left'}`}
+                    style={{
+                        background: block.styleOverrides?.backgroundColor
+                            || `linear-gradient(135deg, ${theme.primaryColor}15, ${theme.secondaryColor}15)`,
+                    }}
+                >
+                    <h1
+                        className="text-3xl font-extrabold mb-2 leading-tight"
+                        style={{ color: theme.textColor }}
+                    >
                         {block.props.headline}
                     </h1>
-                    <p style={{ fontSize: '1.1rem', color: theme.textColor, opacity: 0.7, marginBottom: '1.5rem' }}>
+                    <p
+                        className="text-lg opacity-70 mb-6 max-w-2xl mx-auto"
+                        style={{ color: theme.textColor }}
+                    >
                         {block.props.subhead}
                     </p>
                     {block.props.ctaText && (
-                        <button style={{
-                            background: theme.primaryColor, color: '#fff',
-                            padding: '0.75rem 2rem', borderRadius: '8px', border: 'none',
-                            fontWeight: 600, fontSize: '1rem', cursor: 'pointer',
-                        }}>
+                        <button
+                            className={`
+                                px-8 py-3 font-semibold text-white border-none
+                                ${radiusClass[theme.borderRadius] || 'rounded-lg'}
+                                ${shadowClass[theme.shadow] || 'shadow-sm'}
+                                transition-all duration-200
+                                hover:shadow-lg hover:scale-[1.02]
+                                active:scale-[0.98]
+                                focus:ring-2 focus:ring-offset-2
+                            `}
+                            style={{
+                                backgroundColor: theme.primaryColor,
+                                '--tw-ring-color': theme.primaryColor,
+                            } as React.CSSProperties}
+                        >
                             {block.props.ctaText}
                         </button>
                     )}
@@ -67,17 +98,28 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'TextSection':
             return (
-                <div style={{
-                    padding: '1.5rem 2rem',
-                    background: block.variant === 'highlight' ? `${theme.primaryColor}08` : 'transparent',
-                    borderLeft: block.variant === 'callout' ? `3px solid ${theme.primaryColor}` : undefined,
-                }}>
+                <div
+                    className={`px-8 py-6 ${block.variant === 'callout' ? 'border-l-[3px]' : ''}`}
+                    style={{
+                        background: block.variant === 'highlight' ? `${theme.primaryColor}08` : 'transparent',
+                        borderLeftColor: block.variant === 'callout' ? theme.primaryColor : undefined,
+                    }}
+                >
                     {block.props.heading && (
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem', color: theme.textColor }}>
+                        <h2
+                            className="text-xl font-bold mb-2"
+                            style={{ color: theme.textColor }}
+                        >
                             {block.props.heading}
                         </h2>
                     )}
-                    <p style={{ lineHeight: 1.7, color: theme.textColor, opacity: 0.85 }}>
+                    <p
+                        className={`leading-relaxed opacity-85 ${block.variant === 'quote' ? 'italic text-lg border-l-4 pl-4' : ''}`}
+                        style={{
+                            color: theme.textColor,
+                            borderLeftColor: block.variant === 'quote' ? `${theme.primaryColor}40` : undefined,
+                        }}
+                    >
                         {block.props.body}
                     </p>
                 </div>
@@ -85,19 +127,31 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'Bullets':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
+                <div className="px-8 py-6">
                     {block.props.heading && (
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem', color: theme.textColor }}>
+                        <h3
+                            className="text-lg font-bold mb-3"
+                            style={{ color: theme.textColor }}
+                        >
                             {block.props.heading}
                         </h3>
                     )}
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    <ul className="space-y-2">
                         {block.props.items.map((item, i) => (
-                            <li key={i} style={{ padding: '0.4rem 0', display: 'flex', gap: '0.5rem', color: theme.textColor }}>
-                                <span style={{ color: theme.primaryColor, fontWeight: 700 }}>
-                                    {block.variant === 'checkmark' ? '✓' : block.variant === 'numbered' ? `${i + 1}.` : '•'}
+                            <li
+                                key={i}
+                                className="flex items-start gap-3 group"
+                                style={{ color: theme.textColor }}
+                            >
+                                <span
+                                    className="font-bold flex-shrink-0 mt-0.5 transition-transform group-hover:scale-110"
+                                    style={{ color: theme.primaryColor }}
+                                >
+                                    {block.variant === 'checkmark' ? '✓'
+                                        : block.variant === 'numbered' ? `${i + 1}.`
+                                            : '•'}
                                 </span>
-                                {item}
+                                <span>{item}</span>
                             </li>
                         ))}
                     </ul>
@@ -106,59 +160,91 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'Steps':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
+                <div className="px-8 py-6">
                     {block.props.heading && (
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: theme.textColor }}>
+                        <h3
+                            className="text-lg font-bold mb-4"
+                            style={{ color: theme.textColor }}
+                        >
                             {block.props.heading}
                         </h3>
                     )}
-                    {block.props.steps.map((step, i) => (
-                        <div key={i} style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                            <div style={{
-                                width: 32, height: 32, borderRadius: '50%', background: theme.primaryColor,
-                                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontWeight: 700, fontSize: '0.85rem', flexShrink: 0,
-                            }}>
-                                {i + 1}
+                    <div className={`${block.variant === 'horizontal' ? 'flex gap-6 overflow-x-auto' : 'space-y-4'}`}>
+                        {block.props.steps.map((step, i) => (
+                            <div
+                                key={i}
+                                className={`flex gap-4 ${block.variant === 'numbered-card'
+                                    ? `p-4 ${radiusClass[theme.borderRadius]} ${shadowClass[theme.shadow]} border`
+                                    : ''
+                                    }`}
+                                style={{
+                                    borderColor: block.variant === 'numbered-card' ? `${theme.primaryColor}20` : undefined,
+                                }}
+                            >
+                                <div
+                                    className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 text-white"
+                                    style={{ backgroundColor: theme.primaryColor }}
+                                >
+                                    {i + 1}
+                                </div>
+                                <div>
+                                    <div className="font-semibold" style={{ color: theme.textColor }}>{step.title}</div>
+                                    <div className="text-sm opacity-70" style={{ color: theme.textColor }}>{step.description}</div>
+                                </div>
                             </div>
-                            <div>
-                                <div style={{ fontWeight: 600, color: theme.textColor }}>{step.title}</div>
-                                <div style={{ fontSize: '0.9rem', color: theme.textColor, opacity: 0.7 }}>{step.description}</div>
-                            </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             );
 
         case 'Checklist':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
+                <div className="px-8 py-6">
                     {block.props.heading && (
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem', color: theme.textColor }}>
+                        <h3
+                            className="text-lg font-bold mb-3"
+                            style={{ color: theme.textColor }}
+                        >
                             {block.props.heading}
                         </h3>
                     )}
-                    {block.props.items.map((item) => (
-                        <div key={item.id} style={{ display: 'flex', gap: '0.5rem', padding: '0.4rem 0', color: theme.textColor }}>
-                            <span style={{ color: theme.primaryColor }}>☐</span>
-                            <span>{item.label}{item.isRequired && <span style={{ color: 'red', marginLeft: 4 }}>*</span>}</span>
-                        </div>
-                    ))}
+                    <div className="space-y-2">
+                        {block.props.items.map((item) => (
+                            <div
+                                key={item.id}
+                                className="flex items-start gap-3 py-1 group hover:bg-black/[0.02] px-2 -mx-2 rounded transition-colors"
+                                style={{ color: theme.textColor }}
+                            >
+                                <span className="mt-0.5 transition-transform group-hover:scale-110" style={{ color: theme.primaryColor }}>☐</span>
+                                <div>
+                                    <span>{item.label}</span>
+                                    {item.isRequired && <span className="text-red-500 ml-1 text-xs font-bold">*</span>}
+                                    {item.description && (
+                                        <p className="text-sm opacity-60 mt-0.5">{item.description}</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             );
 
         case 'Testimonial':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
+                <div className="px-8 py-6 space-y-3">
                     {block.props.quotes.map((q, i) => (
-                        <div key={i} style={{
-                            padding: '1rem', marginBottom: '0.75rem', borderRadius: '8px',
-                            background: `${theme.primaryColor}08`, borderLeft: `3px solid ${theme.primaryColor}`,
-                        }}>
-                            <p style={{ fontStyle: 'italic', color: theme.textColor, marginBottom: '0.5rem' }}>
+                        <div
+                            key={i}
+                            className={`p-4 ${radiusClass[theme.borderRadius]} border-l-[3px] transition-shadow hover:shadow-md`}
+                            style={{
+                                background: `${theme.primaryColor}08`,
+                                borderLeftColor: theme.primaryColor,
+                            }}
+                        >
+                            <p className="italic mb-2 leading-relaxed" style={{ color: theme.textColor }}>
                                 &ldquo;{q.text}&rdquo;
                             </p>
-                            <p style={{ fontSize: '0.85rem', fontWeight: 600, color: theme.primaryColor }}>
+                            <p className="text-sm font-semibold" style={{ color: theme.primaryColor }}>
                                 — {q.author}
                             </p>
                         </div>
@@ -168,47 +254,59 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'FAQ':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
+                <div className="px-8 py-6">
                     {block.props.heading && (
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: theme.textColor }}>
+                        <h3
+                            className="text-lg font-bold mb-4"
+                            style={{ color: theme.textColor }}
+                        >
                             {block.props.heading}
                         </h3>
                     )}
-                    {block.props.items.map((item, i) => (
-                        <div key={i} style={{ marginBottom: '1rem', borderBottom: '1px solid #eee', paddingBottom: '1rem' }}>
-                            <div style={{ fontWeight: 600, color: theme.textColor, marginBottom: '0.25rem' }}>
-                                {item.question}
+                    <div className="space-y-4 divide-y divide-gray-100">
+                        {block.props.items.map((item, i) => (
+                            <div key={i} className="pt-4 first:pt-0">
+                                <div className="font-semibold mb-1" style={{ color: theme.textColor }}>
+                                    {item.question}
+                                </div>
+                                <div className="text-sm opacity-70 leading-relaxed" style={{ color: theme.textColor }}>
+                                    {item.answer}
+                                </div>
                             </div>
-                            <div style={{ fontSize: '0.9rem', color: theme.textColor, opacity: 0.7 }}>
-                                {item.answer}
-                            </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             );
 
         case 'CTA':
             return (
-                <div style={{
-                    padding: '2rem', textAlign: 'center',
-                    background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
-                    borderRadius: '12px', margin: '1rem 0',
-                }}>
-                    <h3 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#fff', marginBottom: '0.5rem' }}>
+                <div
+                    className={`p-8 text-center ${radiusClass[theme.borderRadius]} my-4 transition-shadow hover:shadow-xl`}
+                    style={{
+                        background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
+                    }}
+                >
+                    <h3 className="text-xl font-bold text-white mb-2">
                         {block.props.headline}
                     </h3>
                     {block.props.subtext && (
-                        <p style={{ color: 'rgba(255,255,255,0.8)', marginBottom: '1rem' }}>{block.props.subtext}</p>
+                        <p className="text-white/80 mb-4">{block.props.subtext}</p>
                     )}
                     {block.props.priceText && (
-                        <p style={{ color: '#fff', fontWeight: 800, fontSize: '1.5rem', marginBottom: '1rem' }}>
+                        <p className="text-white font-extrabold text-2xl mb-4">
                             {block.props.priceText}
                         </p>
                     )}
-                    <button style={{
-                        background: '#fff', color: theme.primaryColor, padding: '0.75rem 2rem',
-                        borderRadius: '8px', border: 'none', fontWeight: 700, cursor: 'pointer',
-                    }}>
+                    <button
+                        className={`
+                            bg-white px-8 py-3 font-bold border-none
+                            ${radiusClass[theme.borderRadius] || 'rounded-lg'}
+                            transition-all duration-200
+                            hover:shadow-lg hover:scale-[1.02]
+                            active:scale-[0.98]
+                        `}
+                        style={{ color: theme.primaryColor }}
+                    >
                         {block.props.buttonText}
                     </button>
                 </div>
@@ -216,26 +314,34 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'Pricing':
             return (
-                <div style={{
-                    padding: '2rem', textAlign: 'center', border: `2px solid ${theme.primaryColor}`,
-                    borderRadius: '12px', margin: '1rem 0',
-                }}>
+                <div
+                    className={`p-8 text-center border-2 ${radiusClass[theme.borderRadius]} my-4 transition-shadow hover:shadow-lg`}
+                    style={{ borderColor: theme.primaryColor }}
+                >
                     {block.props.headline && (
-                        <h3 style={{ fontWeight: 700, color: theme.textColor, marginBottom: '0.5rem' }}>{block.props.headline}</h3>
+                        <h3 className="font-bold mb-2" style={{ color: theme.textColor }}>{block.props.headline}</h3>
                     )}
-                    <div style={{ fontSize: '2rem', fontWeight: 800, color: theme.primaryColor, marginBottom: '0.5rem' }}>
+                    <div className="text-4xl font-extrabold mb-2" style={{ color: theme.primaryColor }}>
                         {block.props.price}
-                        {block.props.period && <span style={{ fontSize: '1rem', fontWeight: 400 }}>/{block.props.period}</span>}
+                        {block.props.period && <span className="text-base font-normal opacity-60">/{block.props.period}</span>}
                     </div>
-                    <ul style={{ listStyle: 'none', padding: 0, marginBottom: '1.5rem' }}>
+                    <ul className="space-y-1 mb-6">
                         {block.props.features.map((f, i) => (
-                            <li key={i} style={{ padding: '0.3rem 0', color: theme.textColor }}>✓ {f}</li>
+                            <li key={i} className="py-1" style={{ color: theme.textColor }}>
+                                <span style={{ color: theme.primaryColor }}>✓</span> {f}
+                            </li>
                         ))}
                     </ul>
-                    <button style={{
-                        background: theme.primaryColor, color: '#fff', padding: '0.75rem 2rem',
-                        borderRadius: '8px', border: 'none', fontWeight: 700, cursor: 'pointer', width: '100%',
-                    }}>
+                    <button
+                        className={`
+                            w-full px-8 py-3 text-white font-bold border-none
+                            ${radiusClass[theme.borderRadius] || 'rounded-lg'}
+                            transition-all duration-200
+                            hover:shadow-lg hover:scale-[1.01]
+                            active:scale-[0.99]
+                        `}
+                        style={{ backgroundColor: theme.primaryColor }}
+                    >
                         {block.props.buttonText}
                     </button>
                 </div>
@@ -243,48 +349,53 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'Divider':
             return (
-                <div style={{ padding: '1rem 2rem' }}>
+                <div className="px-8 py-4">
                     {block.variant === 'space' ? (
-                        <div style={{ height: '2rem' }} />
+                        <div className="h-8" />
                     ) : block.variant === 'dots' ? (
-                        <div style={{ textAlign: 'center', color: theme.textColor, opacity: 0.3, letterSpacing: '0.5rem' }}>• • •</div>
+                        <div className="text-center tracking-[0.5rem] opacity-30" style={{ color: theme.textColor }}>• • •</div>
                     ) : (
-                        <hr style={{ border: 'none', borderTop: `1px solid ${theme.textColor}20` }} />
+                        <hr className="border-none h-px" style={{ backgroundColor: `${theme.textColor}20` }} />
                     )}
                 </div>
             );
 
         case 'ModuleHeader':
             return (
-                <div style={{
-                    padding: '1.5rem 2rem', background: `${theme.primaryColor}10`,
-                    borderBottom: `2px solid ${theme.primaryColor}`,
-                }}>
-                    <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: theme.primaryColor, fontWeight: 700, marginBottom: '0.25rem' }}>
+                <div
+                    className="px-8 py-6 border-b-2"
+                    style={{
+                        background: `${theme.primaryColor}10`,
+                        borderBottomColor: theme.primaryColor,
+                    }}
+                >
+                    <div className="text-xs uppercase font-bold mb-1 tracking-wider" style={{ color: theme.primaryColor }}>
                         Module {block.props.moduleNumber}
                     </div>
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: theme.textColor, marginBottom: '0.25rem' }}>
+                    <h2 className="text-xl font-bold mb-1" style={{ color: theme.textColor }}>
                         {block.props.title}
                     </h2>
-                    <p style={{ fontSize: '0.9rem', color: theme.textColor, opacity: 0.7 }}>{block.props.description}</p>
-                    <span style={{ fontSize: '0.8rem', color: theme.primaryColor }}>{block.props.lessonCount} lessons</span>
+                    <p className="text-sm opacity-70" style={{ color: theme.textColor }}>{block.props.description}</p>
+                    <span className="text-sm font-medium mt-1 inline-block" style={{ color: theme.primaryColor }}>
+                        {block.props.lessonCount} lessons
+                    </span>
                 </div>
             );
 
         case 'LessonContent':
             return (
-                <div style={{ padding: '1.5rem 2rem' }}>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: theme.textColor, marginBottom: '0.5rem' }}>
+                <div className="px-8 py-6">
+                    <h3 className="text-lg font-bold mb-2" style={{ color: theme.textColor }}>
                         {block.props.title}
                     </h3>
-                    <p style={{ lineHeight: 1.7, color: theme.textColor, opacity: 0.85, marginBottom: '1rem' }}>
+                    <p className="leading-relaxed opacity-85 mb-4" style={{ color: theme.textColor }}>
                         {block.props.body}
                     </p>
                     {block.props.steps && block.props.steps.length > 0 && (
-                        <div>
+                        <div className="space-y-2 pl-2">
                             {block.props.steps.map((s, i) => (
-                                <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                                    <span style={{ color: theme.primaryColor, fontWeight: 700 }}>{i + 1}.</span>
+                                <div key={i} className="flex gap-2">
+                                    <span className="font-bold" style={{ color: theme.primaryColor }}>{i + 1}.</span>
                                     <span style={{ color: theme.textColor }}>{s.title}</span>
                                 </div>
                             ))}
@@ -295,28 +406,37 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'DayHeader':
             return (
-                <div style={{
-                    padding: '1.5rem 2rem', background: `${theme.secondaryColor}10`,
-                    borderLeft: `4px solid ${theme.secondaryColor}`,
-                }}>
-                    <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: theme.secondaryColor, fontWeight: 700 }}>
+                <div
+                    className="px-8 py-6 border-l-4"
+                    style={{
+                        background: `${theme.secondaryColor}10`,
+                        borderLeftColor: theme.secondaryColor,
+                    }}
+                >
+                    <div className="text-xs uppercase font-bold tracking-wider" style={{ color: theme.secondaryColor }}>
                         Day {block.props.dayNumber}
                     </div>
-                    <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: theme.textColor, marginBottom: '0.25rem' }}>
+                    <h2 className="text-lg font-bold mb-1" style={{ color: theme.textColor }}>
                         {block.props.title}
                     </h2>
-                    <p style={{ fontSize: '0.9rem', color: theme.textColor, opacity: 0.7 }}>{block.props.objective}</p>
+                    <p className="text-sm opacity-70" style={{ color: theme.textColor }}>{block.props.objective}</p>
                 </div>
             );
 
         case 'DownloadButton':
             return (
-                <div style={{ padding: '1.5rem 2rem', textAlign: 'center' }}>
-                    <button style={{
-                        background: theme.primaryColor, color: '#fff', padding: '0.75rem 2rem',
-                        borderRadius: '8px', border: 'none', fontWeight: 600, cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                    }}>
+                <div className="px-8 py-6 text-center">
+                    <button
+                        className={`
+                            inline-flex items-center gap-2 px-8 py-3 text-white font-semibold border-none
+                            ${radiusClass[theme.borderRadius] || 'rounded-lg'}
+                            ${shadowClass[theme.shadow] || 'shadow-sm'}
+                            transition-all duration-200
+                            hover:shadow-lg hover:scale-[1.02]
+                            active:scale-[0.98]
+                        `}
+                        style={{ backgroundColor: theme.primaryColor }}
+                    >
                         ⬇ {block.props.label}
                     </button>
                 </div>
@@ -324,19 +444,18 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         case 'Image':
             return (
-                <div style={{
-                    padding: block.variant === 'full-width' ? 0 : '1.5rem 2rem',
-                    textAlign: 'center',
-                }}>
-                    <div style={{
-                        background: `${theme.primaryColor}10`, padding: '3rem',
-                        borderRadius: block.variant === 'rounded' ? '16px' : '8px',
-                        color: theme.textColor, opacity: 0.5,
-                    }}>
+                <div className={`${block.variant === 'full-width' ? '' : 'px-8 py-6'} text-center`}>
+                    <div
+                        className={`p-12 ${block.variant === 'rounded' ? 'rounded-2xl' : radiusClass[theme.borderRadius]} opacity-50 transition-opacity hover:opacity-70`}
+                        style={{
+                            background: `${theme.primaryColor}10`,
+                            color: theme.textColor,
+                        }}
+                    >
                         🖼 {block.props.alt || 'Image placeholder'}
                     </div>
                     {block.props.caption && (
-                        <p style={{ fontSize: '0.8rem', color: theme.textColor, opacity: 0.5, marginTop: '0.5rem' }}>
+                        <p className="text-xs opacity-50 mt-2" style={{ color: theme.textColor }}>
                             {block.props.caption}
                         </p>
                     )}
@@ -345,7 +464,7 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
 
         default:
             return (
-                <div style={{ padding: '1rem 2rem', color: '#999', fontStyle: 'italic' }}>
+                <div className="px-8 py-4 text-gray-400 italic">
                     Unknown block type: {(block as DSLBlock).type}
                 </div>
             );

@@ -29,25 +29,32 @@ export default async function BuilderPage({ params }: Props) {
     if (!creator) redirect('/onboard');
 
     // Fetch product
-    const { data: product } = await supabase
+    const { data: product, error: productError } = await supabase
         .from('products')
         .select('id, title, type, status, active_version_id, creator_id')
         .eq('id', id)
         .single();
 
+    // If query errored (likely RLS/session timing), redirect instead of hard 404
+    if (productError && !product) {
+        redirect('/products');
+    }
+
     if (!product || product.creator_id !== creator.id) notFound();
 
-    // Fetch active version DSL
+    // Fetch active version DSL + HTML
     let dslJson = null;
     let buildPacket = null;
+    let generatedHtml: string | null = null;
     if (product.active_version_id) {
         const { data: version } = await supabase
             .from('product_versions')
-            .select('dsl_json, build_packet')
+            .select('dsl_json, build_packet, generated_html')
             .eq('id', product.active_version_id)
             .single();
         dslJson = version?.dsl_json || null;
         buildPacket = version?.build_packet || null;
+        generatedHtml = (version as unknown as { generated_html: string | null })?.generated_html || null;
     }
 
     return (
@@ -56,6 +63,7 @@ export default async function BuilderPage({ params }: Props) {
             productTitle={product.title}
             productType={product.type}
             initialDsl={dslJson}
+            initialHtml={generatedHtml}
             buildPacket={buildPacket}
         />
     );

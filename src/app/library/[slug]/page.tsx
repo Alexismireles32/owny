@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ContentProgressTracker } from './progress-tracker';
+import { PdfDownloadButton } from './pdf-download-button';
 
 interface Props {
     params: Promise<{ slug: string }>;
@@ -114,15 +115,7 @@ export default async function ContentViewerPage({ params }: Props) {
                             <p className="text-sm text-muted-foreground mb-4">
                                 Download your guide to read offline.
                             </p>
-                            <Button
-                                style={{ backgroundColor: primaryColor }}
-                                className="text-white"
-                                onClick={undefined} // Client component handles this
-                            >
-                                <a href={`/api/content/${slug}/download`} target="_blank" rel="noopener noreferrer">
-                                    Download PDF
-                                </a>
-                            </Button>
+                            <PdfDownloadButton slug={slug} primaryColor={primaryColor} />
                         </CardContent>
                     </Card>
                 )}

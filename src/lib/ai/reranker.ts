@@ -66,7 +66,7 @@ Available Videos (${compressedCards.length} candidates):
 ${JSON.stringify(compressedCards, null, 1)}`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 4096,
         system: RERANK_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userMessage }],
