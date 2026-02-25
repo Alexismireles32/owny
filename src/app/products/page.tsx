@@ -58,7 +58,7 @@ export default async function ProductsPage() {
                         </Link>
                         <h1 className="text-sm font-medium">My Products</h1>
                     </div>
-                    <Link href="/products/new">
+                    <Link href="/dashboard">
                         <Button size="sm">+ New Product</Button>
                     </Link>
                 </div>
@@ -79,7 +79,7 @@ export default async function ProductsPage() {
                         <p className="text-sm text-muted-foreground mt-1 mb-4">
                             Create your first digital product from your video content.
                         </p>
-                        <Link href="/products/new">
+                        <Link href="/dashboard">
                             <Button>Create Your First Product</Button>
                         </Link>
                     </div>

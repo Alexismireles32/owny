@@ -15,8 +15,9 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
     const supabase = await createClient();
 
     let product: { title: string; slug: string; type: string } | null = null;
+    const hasSessionId = typeof session_id === 'string' && session_id.length > 0;
 
-    if (session_id) {
+    if (hasSessionId) {
         // Look up the order from session ID
         const { data: order } = await supabase
             .from('orders')
@@ -34,7 +35,9 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
             <Card className="max-w-md w-full text-center">
                 <CardHeader>
                     <div className="text-5xl mb-3">🎉</div>
-                    <CardTitle className="text-2xl">Purchase Complete!</CardTitle>
+                    <CardTitle className="text-2xl">
+                        {product ? 'Purchase Complete!' : 'Checkout Status'}
+                    </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {product ? (
@@ -56,11 +59,18 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
                     ) : (
                         <>
                             <p className="text-muted-foreground">
-                                Your purchase has been confirmed. Check your email for details.
+                                {hasSessionId
+                                    ? 'We could not verify this checkout session yet. Please check your email or library in a moment.'
+                                    : 'Checkout sessions are verified from Stripe redirects only.'}
                             </p>
-                            <Link href="/">
-                                <Button className="w-full">Go Home</Button>
-                            </Link>
+                            <div className="flex flex-col gap-2">
+                                <Link href="/library">
+                                    <Button className="w-full">Go to My Library</Button>
+                                </Link>
+                                <Link href="/">
+                                    <Button variant="outline" className="w-full">Go Home</Button>
+                                </Link>
+                            </div>
                         </>
                     )}
                 </CardContent>

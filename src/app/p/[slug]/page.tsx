@@ -1,19 +1,58 @@
 // /p/[slug] — Product Sales Page (public)
 // PRD: Renders product details, DSL preview, and CTA
+// HTML products render in sandboxed iframe for safety
+// Legacy DSL: BlockRenderer fallback
 
 import { createClient } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { PublicFooter } from '@/components/public-footer';
 import { trackPageView } from '@/lib/track-view';
 import { BlockRenderer } from '@/components/builder/block-renderer';
+import { CheckoutCtaButton } from '@/components/checkout/checkout-cta-button';
 import type { ProductDSL, ThemeTokens } from '@/types/product-dsl';
+import type { Metadata } from 'next';
 
 interface Props {
     params: Promise<{ slug: string }>;
+}
+
+// --- Dynamic SEO metadata ---
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+    const { slug } = await params;
+    const supabase = await createClient();
+
+    const { data: product } = await supabase
+        .from('products')
+        .select('title, description, type, creators(display_name)')
+        .eq('slug', slug)
+        .eq('status', 'published')
+        .single();
+
+    if (!product) {
+        return { title: 'Product Not Found' };
+    }
+
+    const creator = product.creators as unknown as { display_name: string } | null;
+    const typeLabel = formatProductType(product.type);
+
+    return {
+        title: `${product.title} | ${typeLabel} by ${creator?.display_name || 'Creator'}`,
+        description: product.description || `${typeLabel} by ${creator?.display_name || 'Creator'} — Available on Owny`,
+        openGraph: {
+            title: product.title,
+            description: product.description || `${typeLabel} available on Owny`,
+            type: 'website',
+            siteName: 'Owny',
+        },
+        twitter: {
+            card: 'summary_large_image',
+            title: product.title,
+            description: product.description || `${typeLabel} available on Owny`,
+        },
+    };
 }
 
 export default async function ProductPage({ params }: Props) {
@@ -91,12 +130,12 @@ export default async function ProductPage({ params }: Props) {
     const primaryColor = creator?.brand_tokens?.primaryColor || '#6366f1';
     const isFree = !product.price_cents || product.price_cents === 0;
 
-    // If we have generated HTML, render it as the full page experience
+    // If we have generated HTML, render in sandboxed iframe.
     if (generatedHtml) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
+            <div className="min-h-screen flex flex-col">
                 {/* Nav */}
-                <header className="border-b bg-white/80 backdrop-blur-sm">
+                <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
                     <div className="container mx-auto flex h-14 items-center justify-between px-4">
                         <Link
                             href={`/c/${creator?.handle || ''}`}
@@ -108,8 +147,8 @@ export default async function ProductPage({ params }: Props) {
                     </div>
                 </header>
 
-                {/* Full HTML preview */}
-                <main className="flex-1">
+                {/* Sandboxed preview isolates generated HTML from the app shell. */}
+                <main className="flex-1 bg-gradient-to-br from-slate-50 to-slate-100">
                     <iframe
                         srcDoc={generatedHtml}
                         sandbox="allow-scripts"
@@ -119,22 +158,24 @@ export default async function ProductPage({ params }: Props) {
                     />
                 </main>
 
-                {/* CTA (outside iframe for payment flow) */}
-                <div className="bg-white border-t py-8">
-                    <div className="container mx-auto max-w-md text-center px-4">
-                        <p className="text-3xl font-bold mb-4" style={{ color: primaryColor }}>
-                            {isFree ? 'Free' : formatPrice(product.price_cents, product.currency)}
-                        </p>
-                        <Button
-                            size="lg"
-                            className="w-full max-w-xs text-white"
-                            style={{ backgroundColor: primaryColor }}
-                        >
-                            {isFree ? 'Get Free Access' : 'Buy Now'}
-                        </Button>
-                        <p className="text-xs text-muted-foreground mt-3">
-                            Secure checkout powered by Stripe
-                        </p>
+                {/* Sticky CTA — always visible at bottom */}
+                <div className="sticky bottom-0 z-40 bg-white/95 backdrop-blur-sm border-t shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+                    <div className="container mx-auto max-w-md text-center px-4 py-4">
+                        <div className="flex items-center justify-center gap-4">
+                            <p className="text-2xl font-bold" style={{ color: primaryColor }}>
+                                {isFree ? 'Free' : formatPrice(product.price_cents, product.currency)}
+                            </p>
+                            <CheckoutCtaButton
+                                productId={product.id}
+                                productSlug={product.slug}
+                                isFree={isFree}
+                                size="lg"
+                                className="text-white px-8"
+                                style={{ backgroundColor: primaryColor }}
+                            >
+                                {isFree ? 'Get Free Access' : 'Buy Now'}
+                            </CheckoutCtaButton>
+                        </div>
                     </div>
                 </div>
 
@@ -250,13 +291,16 @@ export default async function ProductPage({ params }: Props) {
                             </p>
                         )}
                     </div>
-                    <Button
+                    <CheckoutCtaButton
+                        productId={product.id}
+                        productSlug={product.slug}
+                        isFree={isFree}
                         size="lg"
                         className="w-full max-w-xs text-white"
                         style={{ backgroundColor: primaryColor }}
                     >
                         {isFree ? 'Get Free Access' : 'Buy Now'}
-                    </Button>
+                    </CheckoutCtaButton>
                     <p className="text-xs text-muted-foreground mt-3">
                         Secure checkout powered by Stripe
                     </p>
