@@ -1,4 +1,4 @@
-// src/middleware.ts
+// src/proxy.ts
 // Supabase auth session refresh + role-based route protection
 
 import { createServerClient } from '@supabase/ssr';
@@ -48,7 +48,7 @@ function isAdminRoute(pathname: string): boolean {
     return ADMIN_ROUTES.some((route) => pathname.startsWith(route));
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     let supabaseResponse = NextResponse.next({
         request,
     });
