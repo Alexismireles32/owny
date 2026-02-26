@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     // Verify creator
     const { data: creator } = await supabase
         .from('creators')
-        .select('id, handle, display_name, brand_tokens')
+        .select('id, handle, display_name, brand_tokens, voice_profile')
         .eq('profile_id', user.id)
         .single();
 
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Step 3: Fetch full clip cards for selected videos
+        // Step 3: Fetch full clip cards + transcript snippets for selected videos
         const selectedVideoIds = reranked.selectedVideos.map((v) => v.videoId);
         const { data: clipCards } = await supabase
             .from('clip_cards')
@@ -103,6 +103,16 @@ export async function POST(request: Request) {
 
         const clipCardMap = new Map(
             (clipCards || []).map((c) => [c.video_id, c.card_json])
+        );
+
+        // Fetch transcript snippets for richer content generation
+        const { data: transcripts } = await supabase
+            .from('video_transcripts')
+            .select('video_id, transcript_text')
+            .in('video_id', selectedVideoIds);
+
+        const transcriptMap = new Map(
+            (transcripts || []).map((t) => [t.video_id, t.transcript_text])
         );
 
         // Step 4: Generate Build Packet via Claude Sonnet 4.5
@@ -121,6 +131,7 @@ export async function POST(request: Request) {
             audience,
             tone,
             mood,
+            voiceProfile: creator.voice_profile as Record<string, unknown> | null,
             creator: {
                 handle: creator.handle,
                 displayName: creator.display_name,
@@ -130,6 +141,7 @@ export async function POST(request: Request) {
                 videoId: v.videoId,
                 title: searchResults.find((s) => s.videoId === v.videoId)?.title || null,
                 clipCard: clipCardMap.get(v.videoId) || null,
+                transcriptSnippet: (transcriptMap.get(v.videoId) || '').slice(0, 2000) || null,
                 reason: v.reason,
             })),
         });

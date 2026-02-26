@@ -79,7 +79,7 @@ Implemented in [`src/lib/scraping/scrapeCreators.ts`](src/lib/scraping/scrapeCre
 ### Base config
 
 - Base URL: `https://api.scrapecreators.com`
-- API key env: `SCRAPE_CREATORS_API_KEY` (required)
+- API key env: `SCRAPECREATORS_API_KEY` (required)
 - Header for provider requests: `x-api-key`
 
 ### Endpoint usage

@@ -17,7 +17,7 @@ export default async function DashboardPage() {
 
     const { data: creator } = await supabase
         .from('creators')
-        .select('id, display_name, handle, avatar_url, pipeline_status')
+        .select('id, display_name, handle, avatar_url, pipeline_status, stripe_connect_status')
         .eq('profile_id', user.id)
         .single();
 
@@ -118,6 +118,7 @@ export default async function DashboardPage() {
                 creatorId={creator.id}
                 handle={creator.handle}
                 displayName={creator.display_name}
+                stripeConnectStatus={creator.stripe_connect_status || 'unconnected'}
                 stats={{
                     revenue: totalRevenueCents,
                     sales: salesCount,

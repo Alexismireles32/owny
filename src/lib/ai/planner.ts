@@ -10,6 +10,7 @@ interface PlannerInput {
     audience?: string;
     tone?: string;
     mood?: string;
+    voiceProfile?: Record<string, unknown> | null;
     creator: {
         handle: string;
         displayName: string;
@@ -19,6 +20,7 @@ interface PlannerInput {
         videoId: string;
         title: string | null;
         clipCard: Record<string, unknown> | null;
+        transcriptSnippet?: string | null;
         reason: string;
     }[];
 }
@@ -27,17 +29,18 @@ const PLANNER_SYSTEM_PROMPT = `You are a Digital Product Strategist for social m
 selected source videos, and brand DNA, produce a complete Build Packet.
 
 RULES:
-1. All content must be based ONLY on the provided clip cards and transcripts. Do not invent claims.
-2. Write in the creator's voice/tone as specified in brand DNA.
+1. All content must be based ONLY on the provided clip cards, transcripts, and source materials. Do not invent claims.
+2. Write in the creator's voice — match their vocabulary, speaking style, tone, and catchphrases EXACTLY. The reader should feel like the creator wrote every word. If a voice profile is provided, study it carefully.
 3. Generate a compelling offer: headline, subhead, 5 benefit bullets, 3 FAQ items, CTA text.
 4. Structure content appropriately for the product type:
-   - pdf_guide: chapters with sections
-   - mini_course: modules with lessons
-   - challenge_7day: 7 days with daily tasks
-   - checklist_toolkit: categories with actionable items
+   - pdf_guide: chapters with sections, each containing actual written content (paragraphs, lists, actionable steps) derived from the creator's transcript insights. Each chapter should be 300-600 words.
+   - mini_course: modules with lessons, each containing actual teaching content, exercises, and action items from the creator's knowledge.
+   - challenge_7day: 7 days with daily objectives, tasks, reflection prompts, and tips — all from the creator's real advice.
+   - checklist_toolkit: categories with actionable checklist items, explanations, and pro tips drawn from the creator's experience.
 5. Include compliance disclaimers relevant to the content niche.
 6. Suggest a price point based on content depth and niche standards.
 7. Every content section must include sourceVideoIds for attribution.
+8. Content must be SUBSTANTIAL — not placeholder summaries. Write the actual product content that a buyer would receive.
 
 OUTPUT: Valid JSON conforming to the BuildPacket schema. No markdown fences.
 The JSON must have these top-level keys:
@@ -76,11 +79,14 @@ Creator Brand DNA:
 - Primary Color: ${input.creator.brandTokens.primaryColor}
 - Font: ${input.creator.brandTokens.fontFamily}
 - Brand Mood: ${input.creator.brandTokens.mood}
+${input.voiceProfile ? `
+Creator Voice Profile (CRITICAL — match this voice exactly):
+${JSON.stringify(input.voiceProfile, null, 1)}` : ''}
 
 Selected Source Videos (${sourcesContext.length}):
 ${JSON.stringify(sourcesContext, null, 1)}
 
-Generate a complete Build Packet JSON for this product.`;
+Generate a complete Build Packet JSON for this product. The content sections must contain REAL, SUBSTANTIAL written content — not summaries or placeholders. Write as if you ARE this creator.`;
 
     const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',

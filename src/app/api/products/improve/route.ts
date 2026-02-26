@@ -19,11 +19,39 @@ const HTML_IMPROVE_PROMPT = `You are a Digital Product Editor. You receive an HT
 RULES:
 - Output ONLY the complete improved HTML page. No commentary, no markdown fences.
 - This is an ACTUAL digital product — NOT a landing page. Keep it as product content.
-- Make precise, targeted changes based on the instruction.
+- Make SURGICAL, TARGETED changes based on the instruction.
+- DO NOT rewrite or regenerate sections that the instruction doesn't mention.
+- Keep all unchanged sections EXACTLY as they are, character for character.
 - Maintain all Tailwind classes, Alpine.js behavior, and CDN script tags.
 - Preserve the overall product structure (chapters, lessons, days, categories).
 - If asked to add content, add REAL, substantive content — not placeholder text.
-- If asked to change tone, update the writing style throughout while keeping facts intact.`;
+- If asked to change tone, update the writing style throughout while keeping facts intact.
+- If asked to fix a specific section, ONLY edit that section.
+- If asked to add a chapter/lesson, insert it in the correct position without disrupting existing content.
+- NEVER remove existing content unless explicitly asked to delete something.`;
+
+/** Extract a numbered list of section IDs and headings from HTML for targeted edits */
+function extractSectionList(html: string): string {
+    const sections: string[] = [];
+    // Match section IDs
+    const sectionIdRegex = /<section[^>]*id="([^"]+)"[^>]*>/gi;
+    let match;
+    while ((match = sectionIdRegex.exec(html)) !== null) {
+        sections.push(`- Section: #${match[1]}`);
+    }
+    // Match h2 headings
+    const h2Regex = /<h2[^>]*>([^<]{3,80})/gi;
+    let h2Match;
+    let idx = 1;
+    while ((h2Match = h2Regex.exec(html)) !== null) {
+        const title = h2Match[1].replace(/&[^;]+;/g, '').trim();
+        if (title) {
+            sections.push(`- Heading ${idx}: "${title}"`);
+            idx++;
+        }
+    }
+    return sections.length > 0 ? sections.join('\n') : '(no named sections found)';
+}
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -77,7 +105,7 @@ export async function POST(request: Request) {
                         system: HTML_IMPROVE_PROMPT,
                         messages: [{
                             role: 'user',
-                            content: `Here is the current digital product HTML:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document. Remember: this is a REAL product (guide/course/challenge/toolkit), not a landing page.`,
+                            content: `Here is the current digital product HTML:\n\n${currentHtml}\n\nSECTIONS FOUND IN THIS DOCUMENT:\n${extractSectionList(currentHtml)}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document. Remember: this is a REAL product (guide/course/challenge/toolkit), not a landing page. Only modify what the instruction asks for — keep everything else EXACTLY the same.`,
                         }],
                     });
 

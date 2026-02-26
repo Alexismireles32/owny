@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { triggerProductPublishedEmail } from '@/lib/email/triggers';
 
 export async function POST(
     _request: Request,
@@ -22,7 +23,7 @@ export async function POST(
 
     const { data: creator } = await supabase
         .from('creators')
-        .select('id')
+        .select('id, handle, display_name, profiles(email)')
         .eq('profile_id', user.id)
         .single();
 
@@ -33,7 +34,7 @@ export async function POST(
     // Verify ownership and get product
     const { data: product } = await supabase
         .from('products')
-        .select('id, creator_id, active_version_id')
+        .select('id, title, slug, creator_id, active_version_id')
         .eq('id', id)
         .single();
 
@@ -63,6 +64,23 @@ export async function POST(
         .from('product_versions')
         .update({ published_at: new Date().toISOString() })
         .eq('id', product.active_version_id);
+
+    // Send publish notification email
+    try {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        const profile = (creator as unknown as { profiles: { email: string } | null })?.profiles;
+        if (profile?.email) {
+            await triggerProductPublishedEmail({
+                creatorEmail: profile.email,
+                creatorName: (creator as unknown as { display_name: string })?.display_name || 'Creator',
+                productTitle: product.title || 'Your product',
+                hubUrl: `${appUrl}/c/${(creator as unknown as { handle: string })?.handle || ''}`,
+                productUrl: `${appUrl}/p/${product.slug}`,
+            });
+        }
+    } catch {
+        // Best-effort email — don't fail the publish
+    }
 
     return NextResponse.json({ message: 'Product published', productId: id });
 }

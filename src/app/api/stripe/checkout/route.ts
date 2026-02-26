@@ -74,6 +74,7 @@ export async function POST(request: Request) {
         .insert({
             buyer_profile_id: user?.id || null,
             product_id: product.id,
+            creator_id: creator.id,
             status: 'pending',
             amount_cents: product.price_cents,
             currency: product.currency || 'usd',

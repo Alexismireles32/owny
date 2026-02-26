@@ -12,6 +12,7 @@ interface DashboardShellProps {
     creatorId: string;
     handle: string;
     displayName: string;
+    stripeConnectStatus: string;
     stats: {
         revenue: number;
         sales: number;
@@ -34,6 +35,7 @@ export function DashboardShell({
     creatorId,
     handle,
     displayName,
+    stripeConnectStatus,
     stats,
     products: initialProducts,
 }: DashboardShellProps) {
@@ -75,6 +77,39 @@ export function DashboardShell({
     return (
         <>
             {initialProducts.length === 0 && <WelcomeTour displayName={displayName} />}
+
+            {stripeConnectStatus !== 'connected' && (
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.7rem',
+                    padding: '0.6rem 1rem',
+                    background: 'linear-gradient(90deg, rgba(245,158,11,0.18), rgba(245,158,11,0.08))',
+                    borderBottom: '1px solid rgba(245,158,11,0.3)',
+                    fontSize: '0.78rem',
+                    color: '#fcd34d',
+                }}>
+                    <span>💳</span>
+                    <span>Connect Stripe to start selling your products.</span>
+                    <a
+                        href="/connect-stripe"
+                        style={{
+                            padding: '0.3rem 0.65rem',
+                            borderRadius: '0.5rem',
+                            background: 'rgba(245,158,11,0.22)',
+                            border: '1px solid rgba(245,158,11,0.45)',
+                            color: '#fde68a',
+                            fontWeight: 600,
+                            fontSize: '0.72rem',
+                            textDecoration: 'none',
+                            transition: 'background 0.2s ease',
+                        }}
+                    >
+                        Connect Now →
+                    </a>
+                </div>
+            )}
 
             <div className="shell-root">
                 <style>{`

@@ -32,16 +32,22 @@ const STAGES = [
         description: 'Analyzing your top videos and content...',
     },
     {
+        key: 'indexing',
+        icon: '📊',
+        label: 'Indexing your content',
+        description: 'Chunking transcripts and generating embeddings...',
+    },
+    {
         key: 'clustering',
         icon: '🧠',
         label: 'Reading your content',
-        description: 'Extracting transcripts and understanding your topics...',
+        description: 'Grouping your videos by topic using AI...',
     },
     {
         key: 'extracting',
         icon: '🎨',
         label: 'Understanding your brand',
-        description: 'Identifying your visual style and color palette...',
+        description: 'Identifying your visual style, voice, and color palette...',
     },
     {
         key: 'ready',
@@ -69,13 +75,15 @@ function statusToStageIndex(status: string): number {
             return 0;
         case 'transcribing':
             return 1;
+        case 'indexing':
+            return 2;
         case 'clustering':
         case 'cleaning':
-            return 2;
-        case 'extracting':
             return 3;
-        case 'ready':
+        case 'extracting':
             return 4;
+        case 'ready':
+            return 5;
         case 'error':
         case 'failed':
         case 'insufficient_content':

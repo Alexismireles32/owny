@@ -51,15 +51,17 @@ export default async function ContentViewerPage({ params }: Props) {
         redirect(`/p/${slug}?access=denied`);
     }
 
-    // Fetch DSL content
+    // Fetch DSL content + generated HTML
     let dslJson: Record<string, unknown> | null = null;
+    let generatedHtml: string | null = null;
     if (product.active_version_id) {
         const { data: version } = await supabase
             .from('product_versions')
-            .select('dsl_json')
+            .select('dsl_json, generated_html')
             .eq('id', product.active_version_id)
             .single();
         dslJson = version?.dsl_json || null;
+        generatedHtml = (version as unknown as { generated_html: string | null })?.generated_html || null;
     }
 
     // Fetch current progress
@@ -106,8 +108,23 @@ export default async function ContentViewerPage({ params }: Props) {
                     </p>
                 </div>
 
-                {/* PDF Guide — download focused */}
-                {product.type === 'pdf_guide' && (
+                {/* PDF Guide — if we have generated HTML, show it + download */}
+                {product.type === 'pdf_guide' && generatedHtml && (
+                    <Card className="mb-6 overflow-hidden">
+                        <CardContent className="p-0">
+                            <iframe
+                                srcDoc={generatedHtml}
+                                sandbox="allow-scripts"
+                                className="w-full border-0"
+                                style={{ minHeight: '70vh' }}
+                                title={product.title}
+                            />
+                        </CardContent>
+                    </Card>
+                )}
+
+                {/* PDF Guide — download only (no generated HTML) */}
+                {product.type === 'pdf_guide' && !generatedHtml && (
                     <Card className="mb-6">
                         <CardContent className="py-8 text-center">
                             <p className="text-4xl mb-3">📄</p>
@@ -120,8 +137,23 @@ export default async function ContentViewerPage({ params }: Props) {
                     </Card>
                 )}
 
-                {/* Course / Challenge / Checklist — block-based content */}
-                {(product.type === 'mini_course' || product.type === 'challenge_7day' || product.type === 'checklist_toolkit') && (
+                {/* Generated HTML viewer for non-PDF product types */}
+                {product.type !== 'pdf_guide' && generatedHtml && (
+                    <Card className="mb-6 overflow-hidden">
+                        <CardContent className="p-0">
+                            <iframe
+                                srcDoc={generatedHtml}
+                                sandbox="allow-scripts"
+                                className="w-full border-0"
+                                style={{ minHeight: '70vh' }}
+                                title={product.title}
+                            />
+                        </CardContent>
+                    </Card>
+                )}
+
+                {/* Course / Challenge / Checklist — DSL-based progress tracking (no generated HTML) */}
+                {(product.type === 'mini_course' || product.type === 'challenge_7day' || product.type === 'checklist_toolkit') && !generatedHtml && (
                     <>
                         <Separator className="my-6" />
 

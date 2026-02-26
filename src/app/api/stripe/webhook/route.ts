@@ -5,6 +5,7 @@ import { getStripe } from '@/lib/stripe';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { log } from '@/lib/logger';
+import { triggerPurchaseEmail, triggerRefundEmail } from '@/lib/email/triggers';
 
 // Use service role for webhook handler (no user auth context)
 function getServiceSupabase() {
@@ -155,6 +156,28 @@ async function handleCheckoutCompleted(
             granted_via: 'purchase',
         }, { onConflict: 'buyer_profile_id,product_id' });
     }
+
+    // Send purchase confirmation email
+    try {
+        const customerEmail = (session.customer_details as Record<string, unknown>)?.email as string
+            || session.customer_email as string;
+        if (customerEmail && productId) {
+            const { data: productData } = await supabase
+                .from('products')
+                .select('title, creators(display_name)')
+                .eq('id', productId)
+                .single();
+            const creator = productData?.creators as unknown as { display_name: string } | null;
+            await triggerPurchaseEmail({
+                buyerEmail: customerEmail,
+                buyerName: customerEmail.split('@')[0],
+                productTitle: productData?.title || 'Your purchase',
+                creatorName: creator?.display_name || 'Creator',
+            });
+        }
+    } catch (emailErr) {
+        log.error('Failed to send purchase email', { error: emailErr instanceof Error ? emailErr.message : 'Unknown' });
+    }
 }
 
 /**
@@ -195,6 +218,31 @@ async function handleRefund(
         .update({ status: 'revoked' })
         .eq('buyer_profile_id', order.buyer_profile_id)
         .eq('product_id', order.product_id);
+
+    // Send refund notification email
+    try {
+        const { data: buyerProfile } = await supabase
+            .from('profiles')
+            .select('email')
+            .eq('id', order.buyer_profile_id)
+            .single();
+        const { data: productData } = await supabase
+            .from('products')
+            .select('title')
+            .eq('id', order.product_id)
+            .single();
+        if (buyerProfile?.email) {
+            const amountCents = (charge.amount_refunded as number) || (charge.amount as number) || 0;
+            await triggerRefundEmail({
+                buyerEmail: buyerProfile.email,
+                buyerName: buyerProfile.email.split('@')[0],
+                productTitle: productData?.title || 'Product',
+                amountFormatted: `$${(amountCents / 100).toFixed(2)}`,
+            });
+        }
+    } catch (emailErr) {
+        log.error('Failed to send refund email', { error: emailErr instanceof Error ? emailErr.message : 'Unknown' });
+    }
 }
 
 /**

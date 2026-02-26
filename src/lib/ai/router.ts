@@ -212,7 +212,19 @@ function buildToolExecutors(creatorId?: string): Record<string, ToolExecutor> {
                 const supabase = createAdminClient();
                 const results = await hybridSearch(supabase, cid, topic, { limit: maxResults });
 
-                // Research v2 §16: Truncate tool results to essential fields (5× token savings)
+                // Fetch transcript snippets for the matched videos
+                const videoIds = results.map((r) => r.videoId);
+                const { data: transcripts } = videoIds.length > 0
+                    ? await supabase
+                        .from('video_transcripts')
+                        .select('video_id, transcript_text')
+                        .in('video_id', videoIds)
+                    : { data: [] };
+                const transcriptMap = new Map(
+                    (transcripts || []).map((t) => [t.video_id, t.transcript_text])
+                );
+
+                // Research v2 §16: Include essential fields + transcript snippets for voice
                 return {
                     count: results.length,
                     clips: results.map((r) => {
@@ -222,6 +234,7 @@ function buildToolExecutors(creatorId?: string): Record<string, ToolExecutor> {
                             title: r.title,
                             keyPoints: Array.isArray(card?.keySteps) ? (card.keySteps as string[]).slice(0, 5) : [],
                             tags: Array.isArray(card?.tags) ? (card.tags as string[]).slice(0, 3) : [],
+                            transcriptSnippet: (transcriptMap.get(r.videoId) || '').slice(0, 800),
                             relevanceScore: r.score,
                         };
                     }),
@@ -242,7 +255,7 @@ function buildToolExecutors(creatorId?: string): Record<string, ToolExecutor> {
                 const supabase = createAdminClient();
                 const { data: creator, error } = await supabase
                     .from('creators')
-                    .select('handle, display_name, bio, avatar_url, brand_tokens')
+                    .select('handle, display_name, bio, avatar_url, brand_tokens, voice_profile')
                     .eq('id', cid)
                     .single();
 
@@ -256,6 +269,7 @@ function buildToolExecutors(creatorId?: string): Record<string, ToolExecutor> {
                     bio: creator.bio,
                     avatarUrl: creator.avatar_url,
                     brandTokens: creator.brand_tokens,
+                    voiceProfile: creator.voice_profile,
                 };
             } catch (err) {
                 return { error: `Brand lookup failed: ${err instanceof Error ? err.message : 'Unknown'}` };

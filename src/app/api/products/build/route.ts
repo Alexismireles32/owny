@@ -32,15 +32,21 @@ THIS IS THE ACTUAL PRODUCT — NOT A LANDING PAGE. No hero sections, no CTAs, no
 
 STRUCTURE:
 1. COVER PAGE — Title, subtitle, author name, a tasteful gradient cover design
-2. TABLE OF CONTENTS — Clickable chapter titles with anchor links
-3. CHAPTERS — Each chapter has:
+2. TABLE OF CONTENTS — Clickable chapter titles with anchor links (href="#chapter-1" etc)
+3. CHAPTERS — Each chapter wrapped in <section id="chapter-N"> with:
    - Chapter number + title (h2)
    - Introduction paragraph
    - Main content body (2-5 paragraphs per section)
    - Key takeaways / bullet points
    - Actionable tips or step-by-step instructions
    - Pro tips in highlighted callout boxes
+   - "Back to Top ↑" link at the bottom of each chapter (href="#toc")
 4. CONCLUSION — Summary of key learnings
+
+NAVIGATION:
+- Table of Contents must have id="toc" and each chapter link must be clickable anchor links
+- Each chapter section must have a unique id (e.g., id="chapter-1", id="chapter-2")
+- Add a sticky or fixed "↑" back-to-top button using Alpine.js
 
 DESIGN:
 - Clean, ebook-like layout. Max-width 720px centered. Generous padding.
@@ -68,35 +74,40 @@ OUTPUT RULES:
 THIS IS THE ACTUAL COURSE — NOT A LANDING PAGE. No hero sections, no CTAs, no pricing.
 
 STRUCTURE:
-1. COURSE HEADER — Course title, description, "X Modules • Y Lessons" summary
-2. COURSE NAVIGATION — Sidebar or top nav showing all modules/lessons (use Alpine.js x-data for active state)
-3. MODULES — Each module contains:
-   - Module number + title
+1. COURSE HEADER — Course title, subtitle, module count, creator name
+2. MODULE NAVIGATION — Sidebar or top nav (Alpine.js tabs/accordion) showing all modules:
+   - Use Alpine.js x-data to track activeModule
+   - Each module title clickable to expand/show that module's content
+   - Show progress ("Module 1 of 5")
+3. MODULE CONTENT — Each module wrapped in <section id="module-N"> with:
+   - Module number badge + title (h2)
    - Module overview (1 paragraph)
-   - LESSONS within each module:
-     - Lesson title
-     - Learning objectives (what you'll learn)
-     - Lesson content (3-5 paragraphs of teaching content)
-     - Key steps / instructions (numbered)
-     - Practice exercise or action item at the end
-     - ✅ Checklist of what to complete before moving on
+   - LESSONS — Each lesson has:
+     - Lesson title (h3)
+     - Lesson text (2-4 paragraphs drawn from transcripts)
+     - Key Takeaways in highlighted box
+     - 🎯 Action Item (1-2 specific steps)
+4. MODULE NAVIGATION — At the bottom of each module:
+   - "← Previous Module" and "Next Module →" buttons
+   - These navigate between sections using Alpine.js
+
+NAVIGATION:
+- Use Alpine.js x-data="{ activeModule: 1 }" pattern for module switching
+- Only show the active module's content (x-show="activeModule === N")
+- Module tabs/nav always visible so user can jump between modules
+- Previous/Next buttons at the bottom of each module section
 
 DESIGN:
-- Course platform aesthetic (like Teachable/Thinkific)
-- Left sidebar: bg-gray-50 with module/lesson links, active state highlight
-- Content area: max-w-3xl with generous spacing
-- Module headers: text-2xl font-bold text-gray-900
-- Lesson headers: text-xl font-semibold
-- Exercise boxes: bg-green-50 border border-green-200 p-6 rounded-xl with "🎯 Practice Exercise" header
-- Checklist items: flex items-center gap-3 with checkbox-style squares
-- Progress feel: "Module 1 of 3" indicators
-
-INTERACTIVE:
-- Use Alpine.js to show/hide lessons within modules (accordion style)
-- Active lesson highlighted in sidebar
+- Dark sidebar or top tab bar for module navigation
+- Active module indicator with accent color
+- Module cards: bg-white rounded-2xl shadow-sm p-8
+- Lesson headers: text-xl font-semibold with colored left border
+- Takeaway boxes: bg-green-50 border border-green-200 p-4 rounded-xl
+- Action items: bg-blue-50 border-l-4 border-blue-400 p-4
+- Step chips: inline-flex h-6 w-6 rounded-full bg-indigo-500 text-white text-xs
 
 CONTENT RULES:
-- Draw ALL teaching content from the creator's transcript data
+- Draw all teaching content from the creator's transcripts
 - Mix verbatim quotes with AI-generated connecting explanations
 - Each lesson should have 300-600 words of real teaching content
 - Include specific steps, not generic advice`,
@@ -111,16 +122,27 @@ THIS IS THE ACTUAL CHALLENGE — NOT A LANDING PAGE. No hero sections, no CTAs, 
 
 STRUCTURE:
 1. CHALLENGE HEADER — Title, "7-Day Challenge by [Creator]", challenge goal
-2. OVERVIEW — What participants will achieve, how it works
-3. DAY CARDS (Day 1 through Day 7) — Each day has:
+2. DAY NAVIGATOR — A horizontal day selector bar (Alpine.js tabs):
+   - Use Alpine.js x-data="{ activeDay: 1 }" pattern
+   - 7 clickable day badges/tabs showing Day 1-7
+   - Active day highlighted with accent color
+   - Each day's content shown/hidden via x-show
+3. OVERVIEW — What participants will achieve, how it works (always visible)
+4. DAY SECTIONS — Each day wrapped in <section id="day-N" x-show="activeDay === N"> with:
    - Day number + title (e.g., "Day 1: Foundation")
    - Daily objective (1 sentence)
    - TODAY'S LESSON (2-3 paragraphs of teaching content from transcripts)
    - TODAY'S TASKS (3-5 specific action items with descriptions)
    - Expected duration per task
    - 📝 Daily Reflection prompt (1-2 questions to journal/think about)
-   - ✅ Daily Checklist (checkboxes for each task)
-4. COMPLETION — Congratulations + next steps
+   - ✅ Daily Checklist (Alpine.js powered checkboxes)
+   - "← Previous Day" and "Next Day →" navigation buttons
+5. COMPLETION — Congratulations + next steps (shown when activeDay === 8 or always at bottom)
+
+NAVIGATION:
+- Day tabs always visible at top for jumping between days
+- Previous/Next buttons at bottom of each day section
+- Progress dots: filled for completed days (Alpine.js state)
 
 DESIGN:
 - Day cards: Each day is a distinct section with consistent layout
@@ -146,7 +168,11 @@ THIS IS THE ACTUAL TOOLKIT — NOT A LANDING PAGE. No hero sections, no CTAs, no
 
 STRUCTURE:
 1. TOOLKIT HEADER — Title, description, total items count
-2. CATEGORIES — Grouped sections, each with:
+2. CATEGORY NAVIGATION — A sticky sidebar or top bar (Alpine.js):
+   - List all categories with item counts
+   - Clickable links that scroll to each category (anchor links)
+   - Show overall progress ("X of Y complete")
+3. CATEGORIES — Each wrapped in <section id="category-N"> with:
    - Category title + description
    - Items count ("8 items")
    - CHECKLIST ITEMS — Each has:
@@ -155,7 +181,13 @@ STRUCTURE:
      - Description/explanation (why this matters, from transcripts)
      - Optional: "Required" vs "Optional" badge
      - Optional: Tip or note from creator
-3. PROGRESS SUMMARY — Shows X of Y complete (Alpine.js powered)
+4. PROGRESS SUMMARY — Shows X of Y complete (Alpine.js powered)
+
+NAVIGATION:
+- Sticky category nav that highlights the current section on scroll
+- Each category header is an anchor target
+- "Back to Categories" link within each section
+- Overall progress bar at the top
 
 DESIGN:
 - Clean, Notion-like aesthetic
@@ -215,7 +247,7 @@ export async function POST(request: Request) {
     // Verify creator
     const { data: creator } = await db
         .from('creators')
-        .select('id, handle, display_name, bio, brand_tokens')
+        .select('id, handle, display_name, bio, brand_tokens, voice_profile')
         .eq('id', creatorId)
         .single();
 
@@ -358,6 +390,15 @@ ${(t.transcript_text || t.description || '').slice(0, 2000)}
 ---`;
                 }).join('\n\n');
 
+                // Send source video info to UI for transparency
+                send({
+                    type: 'source_videos',
+                    videos: (transcripts || []).map((t) => ({
+                        title: t.title || 'Untitled',
+                        views: t.views || 0,
+                    })),
+                });
+
                 // ── Phase 3: Planning ──
                 send({ type: 'status', message: '📝 Planning your product structure...', phase: 'planning' });
 
@@ -398,7 +439,34 @@ ${(t.transcript_text || t.description || '').slice(0, 2000)}
                     return;
                 }
 
-                // Build the AI prompt with FULL transcript context
+                // Build voice and brand context
+                const voiceProfile = creator.voice_profile as Record<string, unknown> | null;
+                const brandTokens = creator.brand_tokens as Record<string, unknown> | null;
+
+                let voiceContext = '';
+                if (voiceProfile) {
+                    voiceContext = `\nCREATOR VOICE PROFILE:\n`;
+                    if (voiceProfile.tone) voiceContext += `- Tone: ${voiceProfile.tone}\n`;
+                    if (voiceProfile.vocabulary) voiceContext += `- Vocabulary style: ${voiceProfile.vocabulary}\n`;
+                    if (voiceProfile.catchphrases && Array.isArray(voiceProfile.catchphrases)) {
+                        voiceContext += `- Catchphrases they use: ${(voiceProfile.catchphrases as string[]).join(', ')}\n`;
+                    }
+                    if (voiceProfile.personality) voiceContext += `- Personality: ${voiceProfile.personality}\n`;
+                    voiceContext += `IMPORTANT: Write the product in this exact voice and tone. Use their catchphrases naturally.\n`;
+                }
+
+                let brandContext = '';
+                if (brandTokens) {
+                    brandContext = `\nCREATOR BRAND STYLING (use these instead of default colors):\n`;
+                    if (brandTokens.primaryColor) brandContext += `- Primary color: ${brandTokens.primaryColor} (use for headings, accents, buttons)\n`;
+                    if (brandTokens.secondaryColor) brandContext += `- Secondary color: ${brandTokens.secondaryColor} (use for hover states, gradients)\n`;
+                    if (brandTokens.backgroundColor) brandContext += `- Background: ${brandTokens.backgroundColor}\n`;
+                    if (brandTokens.textColor) brandContext += `- Text color: ${brandTokens.textColor}\n`;
+                    if (brandTokens.fontFamily) brandContext += `- Font: ${brandTokens.fontFamily} (add Google Fonts link if needed)\n`;
+                    if (brandTokens.mood) brandContext += `- Mood: ${brandTokens.mood} (match the energy of the design)\n`;
+                    brandContext += `IMPORTANT: Apply these brand colors throughout the product instead of default indigo/purple.\n`;
+                }
+
                 const systemPrompt = PRODUCT_SYSTEM_PROMPTS[productType] || PRODUCT_SYSTEM_PROMPTS.pdf_guide;
 
                 const userContent = `Create the ACTUAL digital product content.
@@ -407,6 +475,8 @@ PRODUCT TYPE: ${productType}
 PRODUCT TITLE: ${productTitle}
 CREATOR: ${creator.display_name} (@${creator.handle})
 ${creator.bio ? `CREATOR BIO: ${creator.bio}` : ''}
+${voiceContext}
+${brandContext}
 USER REQUEST: ${message}
 
 VIDEOS USED (${transcripts?.length || 0} videos with full transcripts):
@@ -416,7 +486,8 @@ IMPORTANT:
 - This is the REAL product that buyers receive. Fill it with REAL, SUBSTANTIVE content from the transcripts above.
 - Mix the creator's own words and advice (from transcripts) with smooth connecting text.
 - Every chapter/lesson/day/category must contain real, actionable content — not placeholder text.
-- Write in the creator's voice and style.
+- Write in the creator's voice and style${voiceProfile ? ' as described in the VOICE PROFILE above' : ''}.
+- ${brandTokens ? 'Use the BRAND STYLING colors described above instead of generic colors.' : ''}
 - The product should be worth paying for — thorough, specific, and valuable.
 - Include the Tailwind config script right after the Tailwind CDN:
 ${TAILWIND_CONFIG}

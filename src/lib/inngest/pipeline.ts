@@ -11,6 +11,9 @@ import {
     type NormalizedVideo,
 } from '@/lib/scraping/scrapeCreators';
 import { log } from '@/lib/logger';
+import { indexVideo } from '@/lib/indexing/orchestrator';
+import Anthropic from '@anthropic-ai/sdk';
+import { triggerImportCompletedEmail, triggerImportFailedEmail } from '@/lib/email/triggers';
 import {
     beginPipelineRun,
     completePipelineRun,
@@ -391,7 +394,71 @@ export const scrapePipeline = inngest.createFunction(
                 };
             }
 
-            // ═══ STEP 3: Cluster Content ═══
+            // ═══ STEP 3: Index Content (chunk + embed + clip cards) ═══
+            await heartbeat('index-content:init', {
+                transcripts: transcriptRows.length,
+            });
+            const indexingResult = await step.run('index-content', async () => {
+                await ensureActivePipelineRun(creatorId, runId);
+                await setCreatorPipelineStatus({
+                    creatorId,
+                    runId,
+                    status: 'indexing',
+                    pipelineError: null,
+                });
+
+                log.info('Inngest pipeline step 3: indexing content', { creatorId, runId });
+
+                const supabase = getServiceClient();
+                const { data: dbVideos } = await supabase
+                    .from('videos')
+                    .select('id')
+                    .eq('creator_id', creatorId);
+
+                const videoIds = (dbVideos || []).map((v) => v.id);
+                let totalChunks = 0;
+                let totalClipCards = 0;
+                let totalEmbeddings = 0;
+
+                for (let i = 0; i < videoIds.length; i++) {
+                    try {
+                        const result = await indexVideo(supabase, videoIds[i]);
+                        totalChunks += result.chunksCreated;
+                        totalClipCards += result.clipCardCreated ? 1 : 0;
+                        totalEmbeddings += result.chunksEmbedded + (result.clipCardEmbedded ? 1 : 0);
+                    } catch (err) {
+                        log.error('Failed to index video', {
+                            videoId: videoIds[i],
+                            error: err instanceof Error ? err.message : 'Unknown',
+                        });
+                    }
+
+                    if ((i + 1) % 5 === 0) {
+                        await heartbeat('index-content:running', {
+                            processedVideos: i + 1,
+                            totalVideos: videoIds.length,
+                            totalChunks,
+                            totalClipCards,
+                        });
+                    }
+                }
+
+                log.info('Pipeline step 3 complete', {
+                    creatorId,
+                    runId,
+                    totalChunks,
+                    totalClipCards,
+                    totalEmbeddings,
+                });
+
+                return { totalChunks, totalClipCards, totalEmbeddings };
+            });
+
+            runMetrics.chunks = indexingResult.totalChunks;
+            runMetrics.clipCards = indexingResult.totalClipCards;
+            runMetrics.embeddings = indexingResult.totalEmbeddings;
+
+            // ═══ STEP 4: Cluster Content (AI-powered) ═══
             await heartbeat('cluster-content:init', {
                 transcripts: transcriptRows.length,
             });
@@ -404,71 +471,70 @@ export const scrapePipeline = inngest.createFunction(
                     pipelineError: null,
                 });
 
-                log.info('Inngest pipeline step 3: clustering', { creatorId, runId });
+                log.info('Inngest pipeline step 4: AI clustering', { creatorId, runId });
 
                 const supabase = getServiceClient();
-                const clusterMap = new Map<string, { videoIds: string[]; totalViews: number; count: number }>();
 
-                const keywords: [string, string][] = [
-                    ['morning', 'Morning Routine'],
-                    ['routine', 'Daily Routine'],
-                    ['workout', 'Fitness & Workout'],
-                    ['exercise', 'Fitness & Workout'],
-                    ['recipe', 'Recipes & Cooking'],
-                    ['cook', 'Recipes & Cooking'],
-                    ['tips', 'Tips & Advice'],
-                    ['hack', 'Life Hacks'],
-                    ['review', 'Reviews'],
-                    ['tutorial', 'Tutorials'],
-                    ['how to', 'How-To Guides'],
-                    ['motivation', 'Motivation & Mindset'],
-                    ['productivity', 'Productivity'],
-                    ['finance', 'Finance & Money'],
-                    ['money', 'Finance & Money'],
-                    ['travel', 'Travel'],
-                    ['fashion', 'Fashion & Style'],
-                    ['beauty', 'Beauty & Skincare'],
-                    ['tech', 'Tech & Gadgets'],
-                    ['book', 'Books & Reading'],
-                ];
+                // Build a summary of all video content for AI clustering
+                const videoSummaries = transcriptRows.slice(0, 50).map((r) => ({
+                    id: r.video_id,
+                    title: r.title || '(untitled)',
+                    views: r.views,
+                    transcript: r.transcript_text.slice(0, 300),
+                }));
 
-                for (const row of transcriptRows) {
-                    const text = (row.title || row.description || '').toLowerCase();
-                    let topic = 'General Content';
-                    for (const [kw, label] of keywords) {
-                        if (text.includes(kw)) {
-                            topic = label;
-                            break;
-                        }
+                let clusters: { label: string; videoIds: string[]; summary: string; productType: string; confidence: number }[] = [];
+
+                try {
+                    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+                    const response = await anthropic.messages.create({
+                        model: 'claude-haiku-4-5-20241022',
+                        max_tokens: 2048,
+                        system: `You are a content analyst. Given a list of video titles and transcript snippets, group them into 3-7 topic clusters. For each cluster, provide a label, summary, list of video IDs, recommended product type (pdf_guide, mini_course, challenge_7day, or checklist_toolkit), and confidence score (0-1).\n\nOutput ONLY valid JSON array, no markdown:\n[{"label":"...","videoIds":["..."],"summary":"...","productType":"...","confidence":0.8}]`,
+                        messages: [{ role: 'user', content: JSON.stringify(videoSummaries) }],
+                    });
+
+                    const text = response.content
+                        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+                        .map((b) => b.text)
+                        .join('');
+                    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+                    clusters = JSON.parse(jsonStr);
+                } catch (err) {
+                    log.error('AI clustering failed, falling back to keyword matching', {
+                        error: err instanceof Error ? err.message : 'Unknown',
+                    });
+                    // Fallback: group by simple keyword matching
+                    const clusterMap = new Map<string, { videoIds: string[]; totalViews: number; count: number }>();
+                    for (const row of transcriptRows) {
+                        const topic = 'General Content';
+                        if (!clusterMap.has(topic)) clusterMap.set(topic, { videoIds: [], totalViews: 0, count: 0 });
+                        const c = clusterMap.get(topic)!;
+                        c.videoIds.push(row.video_id);
+                        c.totalViews += row.views;
+                        c.count++;
                     }
-
-                    if (!clusterMap.has(topic)) {
-                        clusterMap.set(topic, { videoIds: [], totalViews: 0, count: 0 });
-                    }
-                    const cluster = clusterMap.get(topic)!;
-                    cluster.videoIds.push(row.video_id);
-                    cluster.totalViews += row.views;
-                    cluster.count += 1;
+                    clusters = Array.from(clusterMap.entries()).map(([label, c]) => ({
+                        label,
+                        videoIds: c.videoIds,
+                        summary: `${c.count} videos`,
+                        productType: c.count >= 5 ? 'mini_course' : 'pdf_guide',
+                        confidence: 0.5,
+                    }));
                 }
 
-                const { error: deleteError } = await supabase
-                    .from('content_clusters')
-                    .delete()
-                    .eq('creator_id', creatorId);
+                // Persist clusters
+                await supabase.from('content_clusters').delete().eq('creator_id', creatorId);
 
-                if (deleteError) {
-                    throw new Error(`Failed to clear old clusters: ${deleteError.message}`);
-                }
-
-                const clusterRows = Array.from(clusterMap.entries()).map(([label, row]) => ({
+                const clusterRows = clusters.map((c) => ({
                     creator_id: creatorId,
-                    label,
-                    topic_summary: `${row.count} videos about ${label}`,
-                    video_ids: row.videoIds,
-                    total_views: row.totalViews,
-                    video_count: row.count,
-                    recommended_product_type: row.count >= 5 ? 'mini_course' : 'pdf_guide',
-                    confidence_score: Math.min(0.99, row.count / 20),
+                    label: c.label,
+                    topic_summary: c.summary,
+                    video_ids: c.videoIds,
+                    total_views: transcriptRows.filter((r) => c.videoIds.includes(r.video_id)).reduce((sum, r) => sum + r.views, 0),
+                    video_count: c.videoIds.length,
+                    recommended_product_type: c.productType,
+                    confidence_score: c.confidence,
                 }));
 
                 if (clusterRows.length > 0) {
@@ -478,18 +544,16 @@ export const scrapePipeline = inngest.createFunction(
                     }
                 }
 
-                log.info('Pipeline step 3 complete', {
-                    creatorId,
-                    runId,
-                    clusters: clusterRows.length,
+                log.info('Pipeline step 4 complete', {
+                    creatorId, runId, clusters: clusterRows.length,
                 });
 
-                return Array.from(clusterMap.keys());
+                return clusters.map((c) => c.label);
             });
 
             runMetrics.clusters = clusterLabels.length;
 
-            // ═══ STEP 4: Extract Visual DNA + Voice Profile ═══
+            // ═══ STEP 5: Extract Visual DNA + Brand Tokens + Voice Profile (AI) ═══
             await heartbeat('extract-dna-voice:init', {
                 clusters: clusterLabels.length,
             });
@@ -502,7 +566,7 @@ export const scrapePipeline = inngest.createFunction(
                     pipelineError: null,
                 });
 
-                log.info('Inngest pipeline step 4: extracting DNA + voice', {
+                log.info('Inngest pipeline step 5: extracting DNA + voice via AI', {
                     creatorId,
                     runId,
                 });
@@ -521,43 +585,211 @@ export const scrapePipeline = inngest.createFunction(
                     extracted_at: new Date().toISOString(),
                 };
 
-                const allText = transcriptRows.map((r) => r.transcript_text).join(' ');
-                const wordCount = allText.split(/\s+/).filter(Boolean).length;
-                const sentenceCount = allText.split(/[.!?]+/).filter(Boolean).length;
+                // AI-powered voice profile extraction
+                const sampleTranscripts = topVideos.slice(0, 5).map((r) => r.transcript_text.slice(0, 1000)).join('\n---\n');
+                let voiceProfile: Record<string, unknown> = {};
+                let brandTokens: Record<string, unknown> = {};
 
-                const voiceProfile = {
-                    total_words: wordCount,
-                    total_transcripts: transcriptRows.length,
-                    avg_sentence_count: sentenceCount,
-                    top_topics: clusterLabels.slice(0, 5),
-                    estimated_tone: wordCount > 5000 ? 'detailed' : 'concise',
-                    extracted_at: new Date().toISOString(),
-                };
+                try {
+                    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+                    const response = await anthropic.messages.create({
+                        model: 'claude-haiku-4-5-20241022',
+                        max_tokens: 1024,
+                        system: `Analyze these video transcripts from a social media creator and extract:
+1. Their voice profile (how they speak/write, vocabulary, tone, catchphrases, style)
+2. Brand recommendations (colors, mood, font suggestion)
+
+Output ONLY valid JSON:\n{"voiceProfile":{"tone":"...","vocabulary":"simple|intermediate|advanced","speakingStyle":"...","catchphrases":["..."],"personality":"...","contentFocus":"..."},"brandTokens":{"primaryColor":"#hex","secondaryColor":"#hex","backgroundColor":"#hex","textColor":"#hex","fontFamily":"inter|outfit|roboto|playfair","mood":"clean|fresh|bold|premium|energetic"}}`,
+                        messages: [{ role: 'user', content: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}` }],
+                    });
+
+                    const text = response.content
+                        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+                        .map((b) => b.text)
+                        .join('');
+                    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+                    const parsed = JSON.parse(jsonStr);
+                    voiceProfile = {
+                        ...parsed.voiceProfile,
+                        total_words: transcriptRows.reduce((sum, r) => sum + r.transcript_text.split(/\s+/).length, 0),
+                        total_transcripts: transcriptRows.length,
+                        top_topics: clusterLabels.slice(0, 5),
+                        extracted_at: new Date().toISOString(),
+                    };
+                    brandTokens = {
+                        ...parsed.brandTokens,
+                        borderRadius: 'md',
+                        spacing: 'normal',
+                        shadow: 'sm',
+                    };
+                } catch (err) {
+                    log.error('AI extraction failed, using defaults', {
+                        error: err instanceof Error ? err.message : 'Unknown',
+                    });
+                    const allText = transcriptRows.map((r) => r.transcript_text).join(' ');
+                    const wordCount = allText.split(/\s+/).filter(Boolean).length;
+                    voiceProfile = {
+                        total_words: wordCount,
+                        total_transcripts: transcriptRows.length,
+                        top_topics: clusterLabels.slice(0, 5),
+                        estimated_tone: wordCount > 5000 ? 'detailed' : 'concise',
+                        extracted_at: new Date().toISOString(),
+                    };
+                    brandTokens = {
+                        primaryColor: '#6366f1',
+                        secondaryColor: '#8b5cf6',
+                        backgroundColor: '#ffffff',
+                        textColor: '#1f2937',
+                        fontFamily: 'inter',
+                        mood: 'clean',
+                        borderRadius: 'md',
+                        spacing: 'normal',
+                        shadow: 'sm',
+                    };
+                }
 
                 const { error } = await supabase
                     .from('creators')
                     .update({
                         visual_dna: visualDna,
                         voice_profile: voiceProfile,
+                        brand_tokens: brandTokens,
                     })
                     .eq('id', creatorId)
                     .eq('pipeline_run_id', runId);
 
                 if (error) {
-                    throw new Error(`Failed to update creator DNA/voice profile: ${error.message}`);
+                    throw new Error(`Failed to update creator DNA/voice/brand: ${error.message}`);
                 }
 
                 runMetrics.topViewCount = topVideos[0]?.views || 0;
 
-                log.info('Pipeline step 4 complete', {
+                log.info('Pipeline step 5 complete', {
                     creatorId,
                     runId,
-                    wordCount,
-                    sentenceCount,
+                    voiceProfileKeys: Object.keys(voiceProfile),
+                    brandMood: brandTokens.mood,
                 });
             });
 
-            // ═══ STEP 5: Mark Complete ═══
+            // ═══ STEP 6: Auto-generate Draft Product ═══
+            await heartbeat('auto-generate:init');
+            await step.run('auto-generate-draft', async () => {
+                await ensureActivePipelineRun(creatorId, runId);
+
+                log.info('Inngest pipeline step 6: auto-generating draft product', {
+                    creatorId,
+                    runId,
+                });
+
+                const supabase = getServiceClient();
+
+                // Check if creator already has products
+                const { data: existingProducts } = await supabase
+                    .from('products')
+                    .select('id')
+                    .eq('creator_id', creatorId)
+                    .limit(1);
+
+                if (existingProducts && existingProducts.length > 0) {
+                    log.info('Creator already has products, skipping auto-generation', { creatorId });
+                    return;
+                }
+
+                // Get the top cluster for product suggestion
+                const { data: topCluster } = await supabase
+                    .from('content_clusters')
+                    .select('label, topic_summary, video_count, recommended_product_type')
+                    .eq('creator_id', creatorId)
+                    .order('video_count', { ascending: false })
+                    .limit(1)
+                    .single();
+
+                if (!topCluster) {
+                    log.warn('No clusters found for auto-generation', { creatorId });
+                    return;
+                }
+
+                // Get creator display name for the title
+                const { data: creatorData } = await supabase
+                    .from('creators')
+                    .select('display_name, handle')
+                    .eq('id', creatorId)
+                    .single();
+
+                const displayName = creatorData?.display_name || creatorData?.handle || 'Creator';
+                const productType = topCluster.recommended_product_type || 'pdf_guide';
+                const typeLabels: Record<string, string> = {
+                    pdf_guide: 'Guide',
+                    mini_course: 'Mini Course',
+                    challenge_7day: '7-Day Challenge',
+                    checklist_toolkit: 'Toolkit',
+                };
+                const typeLabel = typeLabels[productType] || 'Guide';
+
+                const title = `${displayName}'s ${topCluster.label} ${typeLabel}`;
+                const description = `A ${typeLabel.toLowerCase()} about ${topCluster.label.toLowerCase()}, created from ${topCluster.video_count} videos by @${creatorData?.handle || 'creator'}.`;
+
+                const baseSlug = title
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-|-$/g, '')
+                    .slice(0, 60);
+                const slug = `${baseSlug}-${Date.now().toString(36)}`;
+
+                const { data: product, error: productError } = await supabase
+                    .from('products')
+                    .insert({
+                        creator_id: creatorId,
+                        slug,
+                        type: productType,
+                        title,
+                        description,
+                        status: 'draft',
+                        access_type: 'paid',
+                        price_cents: null,
+                        currency: 'usd',
+                    })
+                    .select('id')
+                    .single();
+
+                if (productError) {
+                    log.error('Failed to create draft product', { error: productError.message });
+                    return;
+                }
+
+                // Create initial version
+                if (product) {
+                    const { data: version } = await supabase
+                        .from('product_versions')
+                        .insert({
+                            product_id: product.id,
+                            version_number: 1,
+                            build_packet: {},
+                            dsl_json: {},
+                            source_video_ids: [],
+                        })
+                        .select('id')
+                        .single();
+
+                    if (version) {
+                        await supabase
+                            .from('products')
+                            .update({ active_version_id: version.id })
+                            .eq('id', product.id);
+                    }
+                }
+
+                log.info('Auto-generated draft product', {
+                    creatorId,
+                    runId,
+                    productTitle: title,
+                    productType,
+                    cluster: topCluster.label,
+                });
+            });
+
+            // ═══ STEP 7: Mark Complete ═══
             await heartbeat('mark-ready:init');
             await step.run('mark-ready', async () => {
                 await ensureActivePipelineRun(creatorId, runId);
@@ -568,6 +800,26 @@ export const scrapePipeline = inngest.createFunction(
                     pipelineError: null,
                 });
                 log.info('Pipeline complete', { creatorId, handle, runId, eventId });
+
+                // Send pipeline completion email
+                try {
+                    const supabase = getServiceClient();
+                    const { data: creatorData } = await supabase
+                        .from('creators')
+                        .select('display_name, profiles(email)')
+                        .eq('id', creatorId)
+                        .single();
+                    const profile = creatorData?.profiles as unknown as { email: string } | null;
+                    if (profile?.email) {
+                        await triggerImportCompletedEmail({
+                            creatorEmail: profile.email,
+                            creatorName: creatorData?.display_name || handle,
+                            videoCount: (runMetrics.videoCount as number) || 0,
+                        });
+                    }
+                } catch (emailErr) {
+                    log.error('Failed to send pipeline completion email', { error: emailErr instanceof Error ? emailErr.message : 'Unknown' });
+                }
             });
 
             await completePipelineRun(runId, {
@@ -637,6 +889,26 @@ export const scrapePipeline = inngest.createFunction(
                 step: currentStep,
                 error: message,
             });
+
+            // Send pipeline failure email
+            try {
+                const supabase = getServiceClient();
+                const { data: creatorData } = await supabase
+                    .from('creators')
+                    .select('display_name, profiles(email)')
+                    .eq('id', creatorId)
+                    .single();
+                const profile = creatorData?.profiles as unknown as { email: string } | null;
+                if (profile?.email) {
+                    await triggerImportFailedEmail({
+                        creatorEmail: profile.email,
+                        creatorName: creatorData?.display_name || handle,
+                        errorMessage: message.slice(0, 200),
+                    });
+                }
+            } catch {
+                // Best-effort — don't fail the pipeline error handler over an email
+            }
 
             throw error;
         }

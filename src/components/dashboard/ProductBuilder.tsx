@@ -27,6 +27,19 @@ interface BuildState {
     phase: string;
 }
 
+type PreviewMode = 'desktop' | 'tablet' | 'mobile';
+
+interface VersionSnapshot {
+    html: string;
+    versionId: string | null;
+    label: string;
+}
+
+interface SourceVideo {
+    title: string;
+    views: number;
+}
+
 const SUGGESTIONS = [
     { icon: 'DOC', label: 'Create a PDF guide', type: 'pdf_guide' as const },
     { icon: 'CRS', label: 'Build a mini course', type: 'mini_course' as const },
@@ -78,15 +91,42 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     });
     const [pendingProductType, setPendingProductType] = useState<string | null>(null);
     const [composerError, setComposerError] = useState<string | null>(null);
+    const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop');
+    const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
+    const [sourceVideos, setSourceVideos] = useState<SourceVideo[]>([]);
+    const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'published'>('idle');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const messageCounterRef = useRef(0);
+    const sectionCountRef = useRef(0);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
+
+    // Persist chat to localStorage
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(`owny-builder-${creatorId}`);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed.messages)) {
+                    setMessages(parsed.messages.map((m: ChatMessage) => ({ ...m, timestamp: new Date(m.timestamp) })));
+                    messageCounterRef.current = parsed.messages.length;
+                }
+            }
+        } catch { /* ignore corrupt state */ }
+    }, [creatorId]);
+
+    useEffect(() => {
+        if (messages.length > 0) {
+            try {
+                localStorage.setItem(`owny-builder-${creatorId}`, JSON.stringify({ messages: messages.slice(-50) }));
+            } catch { /* quota exceeded */ }
+        }
+    }, [messages, creatorId]);
 
     const nextMessageId = () => {
         messageCounterRef.current += 1;
@@ -185,10 +225,40 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 continue;
                             }
 
+                            if (eventType === 'source_videos') {
+                                const videos = Array.isArray(event.videos) ? event.videos as SourceVideo[] : [];
+                                setSourceVideos(videos);
+                                if (videos.length > 0) {
+                                    addMessage({
+                                        role: 'status',
+                                        content: `📹 Using ${videos.length} videos: ${videos.slice(0, 3).map(v => `"${v.title}"`).join(', ')}${videos.length > 3 ? ` +${videos.length - 3} more` : ''}`,
+                                    });
+                                }
+                                continue;
+                            }
+
                             if (eventType === 'html_chunk' || eventType === 'html_complete') {
+                                const htmlStr = typeof event.html === 'string' ? event.html : '';
+                                // Detect sections being written for progress
+                                const sectionMatches = htmlStr.match(/<(?:h2|section\s+id=)[^>]*>/gi);
+                                const currentSections = sectionMatches ? sectionMatches.length : 0;
+                                if (currentSections > sectionCountRef.current) {
+                                    sectionCountRef.current = currentSections;
+                                    // Extract the latest section title
+                                    const lastH2 = htmlStr.match(/<h2[^>]*>([^<]{3,60})/gi);
+                                    if (lastH2 && lastH2.length > 0) {
+                                        const titleText = lastH2[lastH2.length - 1].replace(/<[^>]*>/g, '').trim();
+                                        if (titleText) {
+                                            addMessage({
+                                                role: 'status',
+                                                content: `✏️ Writing section ${currentSections}: ${titleText}...`,
+                                            });
+                                        }
+                                    }
+                                }
                                 setBuildState((s) => ({
                                     ...s,
-                                    html: typeof event.html === 'string' ? event.html : s.html,
+                                    html: htmlStr,
                                 }));
                                 continue;
                             }
@@ -196,13 +266,23 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                             if (eventType === 'complete') {
                                 const videosUsed = typeof event.videosUsed === 'number' ? event.videosUsed : null;
                                 const title = typeof event.title === 'string' ? event.title : 'Your product';
-                                setBuildState((s) => ({
-                                    ...s,
-                                    productId: typeof event.productId === 'string' ? event.productId : s.productId,
-                                    versionId: typeof event.versionId === 'string' ? event.versionId : s.versionId,
-                                    isBuilding: false,
-                                    phase: 'complete',
-                                }));
+                                setBuildState((s) => {
+                                    // Save version for undo
+                                    if (s.html) {
+                                        setVersionHistory((prev) => [...prev, {
+                                            html: s.html,
+                                            versionId: s.versionId,
+                                            label: isImprove ? `Before: ${title}` : `v${prev.length + 1}`,
+                                        }]);
+                                    }
+                                    return {
+                                        ...s,
+                                        productId: typeof event.productId === 'string' ? event.productId : s.productId,
+                                        versionId: typeof event.versionId === 'string' ? event.versionId : s.versionId,
+                                        isBuilding: false,
+                                        phase: 'complete',
+                                    };
+                                });
 
                                 if (isImprove) {
                                     addMessage({ role: 'assistant', content: 'Changes applied. Continue refining with another instruction.' });
@@ -284,6 +364,41 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const hasProduct = buildState.html.length > 0;
     const showWelcome = !hasProduct && !buildState.isBuilding && messages.length === 0;
     const activeStep = phaseIndex(buildState.phase);
+
+    const handleUndo = useCallback(() => {
+        if (versionHistory.length === 0) return;
+        const prev = versionHistory[versionHistory.length - 1];
+        setBuildState((s) => ({ ...s, html: prev.html, versionId: prev.versionId }));
+        setVersionHistory((h) => h.slice(0, -1));
+        addMessage({ role: 'status', content: `↩️ Reverted to ${prev.label}` });
+    }, [versionHistory, addMessage]);
+
+    const handlePublish = useCallback(async () => {
+        if (!buildState.productId) return;
+        setPublishStatus('publishing');
+        try {
+            const res = await fetch(`/api/products/${buildState.productId}/publish`, { method: 'POST' });
+            if (res.ok) {
+                setPublishStatus('published');
+                addMessage({ role: 'assistant', content: '🎉 Product published! It\'s now live on your storefront.' });
+                onProductCreated();
+            } else {
+                setPublishStatus('idle');
+                addMessage({ role: 'assistant', content: 'Could not publish. Please try again.' });
+            }
+        } catch {
+            setPublishStatus('idle');
+        }
+    }, [buildState.productId, addMessage, onProductCreated]);
+
+    const handleClearChat = useCallback(() => {
+        setMessages([]);
+        setBuildState({ productId: null, versionId: null, html: '', isBuilding: false, phase: '' });
+        setVersionHistory([]);
+        setSourceVideos([]);
+        setPublishStatus('idle');
+        localStorage.removeItem(`owny-builder-${creatorId}`);
+    }, [creatorId]);
 
     return (
         <div className="builder-root">
@@ -727,6 +842,101 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     color: #fca5a5;
                     font-size: 0.7rem;
                 }
+                .builder-preview-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.4rem;
+                }
+                .builder-device-btn {
+                    border: 1px solid rgba(226,232,240,0.12);
+                    background: rgba(226,232,240,0.06);
+                    color: var(--muted);
+                    border-radius: 0.5rem;
+                    padding: 0.28rem 0.5rem;
+                    font-size: 0.6rem;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    font-family: inherit;
+                    font-weight: 600;
+                }
+                .builder-device-btn:hover {
+                    border-color: rgba(34,211,238,0.35);
+                    color: rgba(226,232,240,0.9);
+                }
+                .builder-device-btn.active {
+                    border-color: rgba(34,211,238,0.5);
+                    background: rgba(34,211,238,0.15);
+                    color: #67e8f9;
+                }
+                .builder-action-btn {
+                    border: 1px solid rgba(34,211,238,0.35);
+                    background: rgba(34,211,238,0.12);
+                    color: #67e8f9;
+                    border-radius: 999px;
+                    padding: 0.3rem 0.7rem;
+                    font-size: 0.66rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    font-family: inherit;
+                }
+                .builder-action-btn:hover {
+                    background: rgba(34,211,238,0.2);
+                }
+                .builder-action-btn:disabled {
+                    opacity: 0.4;
+                    cursor: not-allowed;
+                }
+                .builder-action-btn.publish {
+                    border-color: rgba(74,222,128,0.45);
+                    background: rgba(74,222,128,0.15);
+                    color: #86efac;
+                }
+                .builder-action-btn.publish:hover {
+                    background: rgba(74,222,128,0.25);
+                }
+                .builder-action-btn.published {
+                    border-color: rgba(74,222,128,0.35);
+                    background: rgba(74,222,128,0.08);
+                    color: #86efac;
+                    cursor: default;
+                }
+                .builder-action-btn.undo {
+                    border-color: rgba(245,158,11,0.35);
+                    background: rgba(245,158,11,0.1);
+                    color: #fcd34d;
+                }
+                .builder-action-btn.undo:hover {
+                    background: rgba(245,158,11,0.18);
+                }
+                .builder-clear-btn {
+                    border: 1px solid rgba(248,113,113,0.25);
+                    background: transparent;
+                    color: rgba(248,113,113,0.7);
+                    border-radius: 999px;
+                    padding: 0.3rem 0.6rem;
+                    font-size: 0.6rem;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    font-family: inherit;
+                }
+                .builder-clear-btn:hover {
+                    background: rgba(248,113,113,0.1);
+                    color: #fca5a5;
+                }
+                .builder-preview-iframe-wrap {
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    justify-content: center;
+                    transition: all 0.3s ease;
+                }
+                .builder-preview-iframe-wrap.tablet {
+                    padding: 0 10%;
+                }
+                .builder-preview-iframe-wrap.mobile {
+                    padding: 0 25%;
+                }
                 @media (max-width: 1024px) {
                     .builder-chat {
                         width: min(330px, 48%);
@@ -845,9 +1055,16 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                     : 'Assistant'}
                                         </span>
                                     </div>
-                                    {buildState.phase && (
-                                        <span className="builder-preview-badge">{normalizePhase(buildState.phase)}</span>
-                                    )}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        {buildState.phase && (
+                                            <span className="builder-preview-badge">{normalizePhase(buildState.phase)}</span>
+                                        )}
+                                        {messages.length > 0 && (
+                                            <button type="button" className="builder-clear-btn" onClick={handleClearChat}>
+                                                Clear
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
                                 <div className="builder-chat-messages">
@@ -891,14 +1108,53 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 <div className="builder-preview-header">
                                     <div className="builder-preview-meta">
                                         <span>Live Preview</span>
-                                        {buildState.productId && <span>Draft #{buildState.productId.slice(0, 8)}</span>}
+                                        <div className="builder-preview-actions">
+                                            {(['desktop', 'tablet', 'mobile'] as PreviewMode[]).map((mode) => (
+                                                <button
+                                                    key={mode}
+                                                    type="button"
+                                                    className={`builder-device-btn ${previewMode === mode ? 'active' : ''}`}
+                                                    onClick={() => setPreviewMode(mode)}
+                                                    title={mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                                >
+                                                    {mode === 'desktop' ? '🖥' : mode === 'tablet' ? '📱' : '📱'}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <span className="builder-preview-badge">
-                                        {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
-                                    </span>
+                                    <div className="builder-preview-actions">
+                                        {versionHistory.length > 0 && (
+                                            <button
+                                                type="button"
+                                                className="builder-action-btn undo"
+                                                onClick={handleUndo}
+                                                disabled={buildState.isBuilding}
+                                            >
+                                                ↩ Undo
+                                            </button>
+                                        )}
+                                        {buildState.productId && publishStatus !== 'published' && (
+                                            <button
+                                                type="button"
+                                                className="builder-action-btn publish"
+                                                onClick={() => void handlePublish()}
+                                                disabled={buildState.isBuilding || publishStatus === 'publishing'}
+                                            >
+                                                {publishStatus === 'publishing' ? 'Publishing...' : '🚀 Publish'}
+                                            </button>
+                                        )}
+                                        {publishStatus === 'published' && (
+                                            <span className="builder-action-btn published">✓ Live</span>
+                                        )}
+                                        <span className="builder-preview-badge">
+                                            {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="builder-preview-body">
-                                    <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
+                                    <div className={`builder-preview-iframe-wrap ${previewMode}`}>
+                                        <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
+                                    </div>
                                 </div>
                             </div>
                         </div>
