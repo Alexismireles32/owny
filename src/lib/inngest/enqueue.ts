@@ -107,7 +107,7 @@ async function ensureInngestRegistration(): Promise<void> {
     }
 }
 
-async function postEventBatch(endpoint: string, body: string): Promise<string[]> {
+async function postEventBatch(endpoint: string, body: string, ingressEnv?: string | null): Promise<string[]> {
     const errors: string[] = [];
 
     for (let attempt = 1; attempt <= HTTP_RETRY_ATTEMPTS; attempt++) {
@@ -117,7 +117,10 @@ async function postEventBatch(endpoint: string, body: string): Promise<string[]>
         try {
             const response = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(ingressEnv ? { 'x-inngest-env': ingressEnv } : {}),
+                },
                 body,
                 signal: controller.signal,
             });
@@ -227,6 +230,7 @@ export async function enqueuePipelineStartEvent({
     } catch (sdkError) {
         const sdkMessage = getErrorMessage(sdkError);
         const eventKey = process.env.INNGEST_EVENT_KEY;
+        const ingressEnv = inngest.env || process.env.INNGEST_ENV?.trim() || null;
 
         if (!eventKey) {
             throw new Error(`Inngest enqueue failed via SDK and HTTP fallback is unavailable: ${sdkMessage}`);
@@ -245,11 +249,12 @@ export async function enqueuePipelineStartEvent({
 
         for (const endpoint of buildFallbackEndpoints(eventKey)) {
             try {
-                const ids = await postEventBatch(endpoint, body);
+                const ids = await postEventBatch(endpoint, body, ingressEnv);
                 log.warn('Inngest enqueue recovered via HTTP fallback', {
                     creatorId,
                     handle,
                     endpoint,
+                    ingressEnv,
                     sdkError: sdkMessage,
                 });
 

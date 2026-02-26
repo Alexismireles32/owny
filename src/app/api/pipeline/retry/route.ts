@@ -3,11 +3,12 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert, markLatestDeadLetterReplayed } from '@/lib/inngest/reliability';
+import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
 
@@ -82,6 +83,15 @@ export async function POST(request: Request) {
             runId,
             trigger: 'dlq_replay',
         });
+        after(() =>
+            startDispatchFallbackWatchdog({
+                creatorId: creator.id,
+                handle: creator.handle,
+                runId,
+                trigger: 'dlq_replay',
+                source: 'pipeline_retry',
+            })
+        );
         await markLatestDeadLetterReplayed(creator.id);
 
         log.info('Pipeline retry enqueued', {

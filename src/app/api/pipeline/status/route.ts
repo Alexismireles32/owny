@@ -4,11 +4,12 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert } from '@/lib/inngest/reliability';
+import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 
 const RUNNING_STATES = new Set(['scraping', 'transcribing', 'indexing', 'cleaning', 'clustering', 'extracting']);
 const STALE_PIPELINE_MS = 2 * 60 * 1000;
@@ -138,6 +139,15 @@ export async function GET(request: Request) {
                         runId,
                         trigger: 'auto_recovery',
                     });
+                    after(() =>
+                        startDispatchFallbackWatchdog({
+                            creatorId: creator.id,
+                            handle: creator.handle,
+                            runId,
+                            trigger: 'auto_recovery',
+                            source: 'pipeline_status_auto_recovery',
+                        })
+                    );
                 } catch (err) {
                     const message = err instanceof Error ? err.message : 'Unknown enqueue error';
                     log.error('Auto-recovery enqueue failed', { creatorId: creator.id, error: message });

@@ -7,7 +7,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { fetchTikTokProfile, AppError } from '@/lib/scraping/scrapeCreators';
 import { getPrefetchedProfile, setPrefetchedProfile } from '@/lib/scraping/prefetch-cache';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
@@ -15,6 +15,7 @@ import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert, type PipelineTrigger } from '@/lib/inngest/reliability';
+import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 
 const HANDLE_REGEX = /^[a-zA-Z0-9._]{1,24}$/;
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
@@ -52,6 +53,15 @@ async function enqueuePipelineEvent(
         }
 
         await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
+        after(() =>
+            startDispatchFallbackWatchdog({
+                creatorId,
+                handle,
+                runId,
+                trigger,
+                source: 'scrape_profile',
+            })
+        );
         return { ok: true as const, runId };
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown enqueue error';

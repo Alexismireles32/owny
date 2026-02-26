@@ -3,11 +3,12 @@
 // Used for manual retries or re-running the pipeline
 
 import { createClient } from '@/lib/supabase/server';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert } from '@/lib/inngest/reliability';
+import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -83,6 +84,15 @@ export async function POST(request: Request) {
             runId,
             trigger: 'manual_retry',
         });
+        after(() =>
+            startDispatchFallbackWatchdog({
+                creatorId,
+                handle,
+                runId,
+                trigger: 'manual_retry',
+                source: 'pipeline_start',
+            })
+        );
 
         return NextResponse.json({
             message: 'Pipeline started via Inngest',
