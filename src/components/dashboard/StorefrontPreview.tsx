@@ -10,13 +10,6 @@ interface StorefrontPreviewProps {
     creatorId: string;
 }
 
-const STYLE_PROMPTS = [
-    'Make it editorial and minimalist',
-    'Give it a bold launch-day style',
-    'Use a clean premium coaching look',
-    'Make it warm and lifestyle focused',
-];
-
 export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId }: StorefrontPreviewProps) {
     const [designPrompt, setDesignPrompt] = useState('');
     const [restyling, setRestyling] = useState(false);
@@ -73,7 +66,8 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
                     align-items: center;
                     padding: 1rem 1rem 1.05rem;
                     gap: 0.78rem;
-                    overflow: hidden;
+                    overflow-y: auto;
+                    overflow-x: hidden;
                 }
                 .preview-head {
                     width: min(340px, 100%);
@@ -96,8 +90,10 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
                 }
                 .preview-phone {
                     width: min(340px, 100%);
-                    flex: 1;
-                    min-height: 320px;
+                    flex: 0 0 auto;
+                    aspect-ratio: 9 / 19.5;
+                    min-height: 260px;
+                    max-height: min(68vh, 700px);
                     background: linear-gradient(160deg, rgba(6, 12, 22, 0.9), rgba(12, 21, 33, 0.95));
                     border-radius: 2.1rem;
                     border: 1px solid var(--preview-line);
@@ -167,32 +163,6 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
                     color: rgba(226, 232, 240, 0.44);
                     font-size: 0.68rem;
                     text-align: center;
-                }
-                .preview-presets {
-                    width: min(340px, 100%);
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 0.4rem;
-                }
-                .preview-preset {
-                    border: 1px solid rgba(226, 232, 240, 0.18);
-                    background: rgba(226, 232, 240, 0.08);
-                    color: rgba(226, 232, 240, 0.8);
-                    border-radius: 999px;
-                    font-size: 0.64rem;
-                    padding: 0.32rem 0.58rem;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    font-family: inherit;
-                }
-                .preview-preset:hover {
-                    border-color: rgba(34, 211, 238, 0.38);
-                    color: #a5f3fc;
-                    background: rgba(34, 211, 238, 0.13);
-                }
-                .preview-preset:disabled {
-                    opacity: 0.45;
-                    cursor: not-allowed;
                 }
                 .preview-form {
                     width: min(340px, 100%);
@@ -278,23 +248,6 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
             </div>
 
             <div className="preview-handle">owny.store/c/{handle}</div>
-
-            <div className="preview-presets">
-                {STYLE_PROMPTS.map((preset) => (
-                    <button
-                        key={preset}
-                        type="button"
-                        className="preview-preset"
-                        disabled={restyling}
-                        onClick={() => {
-                            setDesignPrompt(preset);
-                            void applyRestyle(preset);
-                        }}
-                    >
-                        {preset}
-                    </button>
-                ))}
-            </div>
 
             <form className="preview-form" onSubmit={handleRestyle}>
                 <input
