@@ -84,6 +84,7 @@ export async function POST(request: Request) {
             runId,
             trigger: 'manual_retry',
         });
+        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
         after(() =>
             startDispatchFallbackWatchdog({
                 creatorId,
@@ -91,6 +92,7 @@ export async function POST(request: Request) {
                 runId,
                 trigger: 'manual_retry',
                 source: 'pipeline_start',
+                graceMs: fallbackGraceMs,
             })
         );
 

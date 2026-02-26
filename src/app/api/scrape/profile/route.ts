@@ -52,7 +52,8 @@ async function enqueuePipelineEvent(
             throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
         }
 
-        await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
+        const enqueue = await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
+        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
         after(() =>
             startDispatchFallbackWatchdog({
                 creatorId,
@@ -60,6 +61,7 @@ async function enqueuePipelineEvent(
                 runId,
                 trigger,
                 source: 'scrape_profile',
+                graceMs: fallbackGraceMs,
             })
         );
         return { ok: true as const, runId };

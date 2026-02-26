@@ -1,6 +1,6 @@
 import { inngest } from '@/lib/inngest/client';
 import { log } from '@/lib/logger';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { PipelineTrigger } from '@/lib/inngest/reliability';
 
 interface PipelineStartEventInput {
@@ -17,6 +17,8 @@ interface EnqueueResult {
     endpoint?: string;
     runId: string;
     eventId: string;
+    eventInternalId: string | null;
+    dispatchVerified: boolean | null;
 }
 
 interface InngestSdkSendResult {
@@ -29,6 +31,8 @@ const ENQUEUE_TIMEOUT_MS = 10_000;
 const HTTP_RETRY_ATTEMPTS = 2;
 const SYNC_TIMEOUT_MS = 5_000;
 const SYNC_RETRY_WINDOW_MS = 5 * 60 * 1000;
+const DISPATCH_VERIFY_ATTEMPTS = 4;
+const DISPATCH_VERIFY_INTERVAL_MS = 1_000;
 
 let lastSyncAttemptAt = 0;
 
@@ -45,6 +49,76 @@ function getErrorMessage(error: unknown): string {
         return error.message;
     }
     return String(error);
+}
+
+function hashSigningKeyForApi(signingKey: string | undefined): string | null {
+    if (!signingKey) return null;
+
+    const prefixMatch = signingKey.match(/^signkey-[\w]+-/);
+    const prefix = prefixMatch?.[0] || '';
+    const keyBody = signingKey.replace(/^signkey-[\w]+-/, '');
+
+    try {
+        const digest = createHash('sha256')
+            .update(Buffer.from(keyBody, 'hex'))
+            .digest('hex');
+        return `${prefix}${digest}`;
+    } catch {
+        return null;
+    }
+}
+
+async function getEventRunCount(eventInternalId: string, authToken: string): Promise<number | null> {
+    const endpoint = `https://api.inngest.com/v1/events/${encodeURIComponent(eventInternalId)}/runs`;
+    const response = await fetch(endpoint, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload: unknown = await response.json();
+    if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        'data' in payload &&
+        Array.isArray((payload as { data?: unknown }).data)
+    ) {
+        return (payload as { data: unknown[] }).data.length;
+    }
+
+    return null;
+}
+
+async function verifyDispatchCreatedRun(eventInternalId: string): Promise<boolean | null> {
+    const signingKey = process.env.INNGEST_SIGNING_KEY;
+    const authToken = hashSigningKeyForApi(signingKey);
+    if (!authToken) return null;
+
+    for (let attempt = 1; attempt <= DISPATCH_VERIFY_ATTEMPTS; attempt++) {
+        try {
+            const runCount = await getEventRunCount(eventInternalId, authToken);
+            if (typeof runCount === 'number' && runCount > 0) {
+                return true;
+            }
+        } catch (error) {
+            log.warn('Inngest dispatch verification failed', {
+                eventInternalId,
+                attempt,
+                error: getErrorMessage(error),
+            });
+            return null;
+        }
+
+        if (attempt < DISPATCH_VERIFY_ATTEMPTS) {
+            await sleep(DISPATCH_VERIFY_INTERVAL_MS);
+        }
+    }
+
+    return false;
 }
 
 function buildFallbackEndpoints(eventKey: string): string[] {
@@ -221,11 +295,18 @@ export async function enqueuePipelineStartEvent({
             throw new Error('Inngest SDK did not return an event id');
         }
 
+        const eventInternalId = ids[0] || null;
+        const dispatchVerified = eventInternalId
+            ? await verifyDispatchCreatedRun(eventInternalId)
+            : null;
+
         return {
             ids,
             transport: 'sdk',
             runId: normalizedRunId,
             eventId,
+            eventInternalId,
+            dispatchVerified,
         };
     } catch (sdkError) {
         const sdkMessage = getErrorMessage(sdkError);
@@ -264,6 +345,11 @@ export async function enqueuePipelineStartEvent({
                     endpoint,
                     runId: normalizedRunId,
                     eventId,
+                    eventInternalId: ids[0] || null,
+                    dispatchVerified:
+                        ids[0]
+                            ? await verifyDispatchCreatedRun(ids[0])
+                            : null,
                 };
             } catch (error) {
                 endpointErrors.push(`${endpoint}: ${getErrorMessage(error)}`);

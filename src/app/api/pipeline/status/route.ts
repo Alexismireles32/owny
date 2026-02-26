@@ -133,12 +133,13 @@ export async function GET(request: Request) {
                         throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
                     }
 
-                    await enqueuePipelineStartEvent({
+                    const enqueue = await enqueuePipelineStartEvent({
                         creatorId: creator.id,
                         handle: creator.handle,
                         runId,
                         trigger: 'auto_recovery',
                     });
+                    const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
                     after(() =>
                         startDispatchFallbackWatchdog({
                             creatorId: creator.id,
@@ -146,6 +147,7 @@ export async function GET(request: Request) {
                             runId,
                             trigger: 'auto_recovery',
                             source: 'pipeline_status_auto_recovery',
+                            graceMs: fallbackGraceMs,
                         })
                     );
                 } catch (err) {

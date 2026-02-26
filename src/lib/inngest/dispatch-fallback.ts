@@ -12,6 +12,7 @@ interface DispatchFallbackInput {
     runId: string;
     trigger: PipelineTrigger;
     source: string;
+    graceMs?: number;
 }
 
 function getServiceDb() {
@@ -31,7 +32,7 @@ function asMessage(error: unknown): string {
 }
 
 export async function startDispatchFallbackWatchdog(input: DispatchFallbackInput): Promise<void> {
-    await sleep(DISPATCH_GRACE_MS);
+    await sleep(typeof input.graceMs === 'number' ? Math.max(0, input.graceMs) : DISPATCH_GRACE_MS);
     const db = getServiceDb();
 
     const { data: runRow, error: runError } = await db

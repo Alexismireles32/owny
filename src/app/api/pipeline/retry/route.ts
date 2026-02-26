@@ -77,12 +77,13 @@ export async function POST(request: Request) {
             throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
         }
 
-        await enqueuePipelineStartEvent({
+        const enqueue = await enqueuePipelineStartEvent({
             creatorId: creator.id,
             handle: creator.handle,
             runId,
             trigger: 'dlq_replay',
         });
+        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
         after(() =>
             startDispatchFallbackWatchdog({
                 creatorId: creator.id,
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
                 runId,
                 trigger: 'dlq_replay',
                 source: 'pipeline_retry',
+                graceMs: fallbackGraceMs,
             })
         );
         await markLatestDeadLetterReplayed(creator.id);
