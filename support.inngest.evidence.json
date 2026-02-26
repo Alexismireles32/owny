@@ -1,0 +1,302 @@
+{
+  "capturedAt": "2026-02-26T20:42:22.901Z",
+  "deployment": {
+    "alias": "https://owny.vercel.app"
+  },
+  "introspection": {
+    "status": 200,
+    "body": {
+      "extra": {
+        "is_mode_explicit": false,
+        "native_crypto": true,
+        "is_streaming": false
+      },
+      "has_event_key": true,
+      "has_signing_key": true,
+      "function_count": 1,
+      "mode": "cloud",
+      "schema_version": "2024-05-24",
+      "authentication_succeeded": true,
+      "api_origin": "https://api.inngest.com/",
+      "app_id": "owny-core",
+      "capabilities": {
+        "trust_probe": "v1",
+        "connect": "v1"
+      },
+      "env": "main",
+      "event_api_origin": "https://inn.gs/",
+      "event_key_hash": "40198f470acec8ea02fd3b1ab311aa5ba1118dfcc665e0188aa3f2eb5b2f7651",
+      "framework": "nextjs",
+      "sdk_language": "js",
+      "sdk_version": "3.52.3",
+      "serve_origin": null,
+      "serve_path": null,
+      "signing_key_fallback_hash": null,
+      "signing_key_hash": "signkey-prod-6134a527669142574ad4b2052390b6251e96a480f84798bce9e3fcdfbdf04458"
+    }
+  },
+  "registrationSync": {
+    "status": 200,
+    "body": {
+      "message": "Successfully registered",
+      "modified": true
+    }
+  },
+  "apps": {
+    "owny": {
+      "status": 200,
+      "body": [
+        {
+          "internal_id": "8bbde771-f32c-410b-913e-3e529c364bee",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-drip-email-tick",
+          "name": "drip-email-tick",
+          "config": {
+            "fv": 1,
+            "id": "8bbde771-f32c-410b-913e-3e529c364bee",
+            "name": "drip-email-tick",
+            "slug": "owny-drip-email-tick",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://golivvy-3kwgfhlq5-alexismrls32-4348s-projects.vercel.app/api/inngest?fnId=owny-drip-email-tick&stepId=step",
+                "name": "step"
+              }
+            ],
+            "triggers": [
+              {
+                "event": "email/drip.tick"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.708827Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        },
+        {
+          "internal_id": "bafb0b3a-8b75-4a58-8482-894fb41fdabf",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-generate-cover-art",
+          "name": "generate-cover-art",
+          "config": {
+            "fv": 1,
+            "id": "bafb0b3a-8b75-4a58-8482-894fb41fdabf",
+            "name": "generate-cover-art",
+            "slug": "owny-generate-cover-art",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://golivvy-3kwgfhlq5-alexismrls32-4348s-projects.vercel.app/api/inngest?fnId=owny-generate-cover-art&stepId=step",
+                "name": "step",
+                "retries": 2
+              }
+            ],
+            "triggers": [
+              {
+                "event": "product/cover.generate"
+              }
+            ],
+            "concurrency": [
+              {
+                "hash": "",
+                "limit": 3,
+                "scope": "Fn"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.72976Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        },
+        {
+          "internal_id": "ea33fa86-83a8-42ac-a687-2a77291fbb9e",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-build-ghost-product",
+          "name": "build-ghost-product",
+          "config": {
+            "fv": 1,
+            "id": "ea33fa86-83a8-42ac-a687-2a77291fbb9e",
+            "name": "build-ghost-product",
+            "slug": "owny-build-ghost-product",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://golivvy-3kwgfhlq5-alexismrls32-4348s-projects.vercel.app/api/inngest?fnId=owny-build-ghost-product&stepId=step",
+                "name": "step",
+                "retries": 0
+              }
+            ],
+            "triggers": [
+              {
+                "event": "product/build.start"
+              }
+            ],
+            "concurrency": [
+              {
+                "hash": "",
+                "limit": 4,
+                "scope": "Fn"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.727439Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        },
+        {
+          "internal_id": "1c276f37-0b8d-4037-a604-468e5226ce19",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-drip-email-send",
+          "name": "drip-email-send",
+          "config": {
+            "fv": 1,
+            "id": "1c276f37-0b8d-4037-a604-468e5226ce19",
+            "name": "drip-email-send",
+            "slug": "owny-drip-email-send",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://golivvy-3kwgfhlq5-alexismrls32-4348s-projects.vercel.app/api/inngest?fnId=owny-drip-email-send&stepId=step",
+                "name": "step"
+              }
+            ],
+            "triggers": [
+              {
+                "event": "email/drip.send"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.622413Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        },
+        {
+          "internal_id": "ee68e808-919e-41d3-bfe6-8c3748068953",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-drip-email-cron",
+          "name": "drip-email-cron",
+          "config": {
+            "fv": 1,
+            "id": "ee68e808-919e-41d3-bfe6-8c3748068953",
+            "name": "drip-email-cron",
+            "slug": "owny-drip-email-cron",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://golivvy-3kwgfhlq5-alexismrls32-4348s-projects.vercel.app/api/inngest?fnId=owny-drip-email-cron&stepId=step",
+                "name": "step"
+              }
+            ],
+            "triggers": [
+              {
+                "cron": "0 * * * *"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.70195Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        },
+        {
+          "internal_id": "fc52398e-f40f-49a1-a79e-2cdc64c345f4",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "22d61283-4a89-4d64-8d92-1e3766b10465",
+          "id": "owny-scrape-pipeline",
+          "name": "Scrape Creator Pipeline",
+          "config": {
+            "fv": 1,
+            "id": "fc52398e-f40f-49a1-a79e-2cdc64c345f4",
+            "name": "Scrape Creator Pipeline",
+            "slug": "owny-scrape-pipeline",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://owny.vercel.app/api/inngest?fnId=owny-scrape-pipeline&stepId=step",
+                "name": "step",
+                "retries": 2
+              }
+            ],
+            "cancel": [
+              {
+                "if": "event.data.creatorId == async.data.creatorId",
+                "event": "pipeline/cancel"
+              }
+            ],
+            "triggers": [
+              {
+                "event": "pipeline/start"
+              }
+            ]
+          },
+          "created_at": "2026-02-22T03:23:59.63533Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        }
+      ]
+    },
+    "ownyCore": {
+      "status": 200,
+      "body": [
+        {
+          "internal_id": "fb87b148-3bd3-42ef-9d96-2528b951f324",
+          "env_id": "4f164030-c003-4093-b6cb-34b7001bda45",
+          "app_id": "f9f72d86-c97c-460d-9162-01d2eba9e753",
+          "id": "owny-core-scrape-pipeline",
+          "name": "Scrape Creator Pipeline",
+          "config": {
+            "fv": 1,
+            "id": "fb87b148-3bd3-42ef-9d96-2528b951f324",
+            "name": "Scrape Creator Pipeline",
+            "slug": "owny-core-scrape-pipeline",
+            "steps": [
+              {
+                "id": "step",
+                "uri": "https://owny.vercel.app/api/inngest?fnId=owny-core-scrape-pipeline&stepId=step",
+                "name": "step",
+                "retries": 2
+              }
+            ],
+            "cancel": [
+              {
+                "if": "event.data.creatorId == async.data.creatorId",
+                "event": "pipeline/cancel"
+              }
+            ],
+            "triggers": [
+              {
+                "event": "pipeline/start"
+              }
+            ]
+          },
+          "created_at": "2026-02-26T20:20:56.85853Z",
+          "archived_at": "0001-01-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  "probes": {
+    "pipelineStart": {
+      "eventId": "support-pipeline-start-1772138544731",
+      "internalId": "01KJDTZ3RMXV0NTKCHZ0N4415X",
+      "sendStatus": 200,
+      "runCounts": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "dripTick": {
+      "eventId": "support-email-drip-tick-1772138551901",
+      "internalId": "01KJDTZAMVC74GXWG9GAW71J1N",
+      "sendStatus": 200,
+      "runCounts": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}
