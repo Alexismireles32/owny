@@ -140,16 +140,19 @@ export async function GET(request: Request) {
                         trigger: 'auto_recovery',
                     });
                     const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-                    after(() =>
-                        startDispatchFallbackWatchdog({
-                            creatorId: creator.id,
-                            handle: creator.handle,
-                            runId,
-                            trigger: 'auto_recovery',
-                            source: 'pipeline_status_auto_recovery',
-                            graceMs: fallbackGraceMs,
-                        })
-                    );
+                    const fallbackInput = {
+                        creatorId: creator.id,
+                        handle: creator.handle,
+                        runId,
+                        trigger: 'auto_recovery' as const,
+                        source: 'pipeline_status_auto_recovery',
+                        graceMs: fallbackGraceMs,
+                    };
+                    if (fallbackGraceMs === 0) {
+                        void startDispatchFallbackWatchdog(fallbackInput);
+                    } else {
+                        after(() => startDispatchFallbackWatchdog(fallbackInput));
+                    }
                 } catch (err) {
                     const message = err instanceof Error ? err.message : 'Unknown enqueue error';
                     log.error('Auto-recovery enqueue failed', { creatorId: creator.id, error: message });

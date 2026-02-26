@@ -54,16 +54,19 @@ async function enqueuePipelineEvent(
 
         const enqueue = await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
         const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        after(() =>
-            startDispatchFallbackWatchdog({
-                creatorId,
-                handle,
-                runId,
-                trigger,
-                source: 'scrape_profile',
-                graceMs: fallbackGraceMs,
-            })
-        );
+        const fallbackInput = {
+            creatorId,
+            handle,
+            runId,
+            trigger,
+            source: 'scrape_profile',
+            graceMs: fallbackGraceMs,
+        } as const;
+        if (fallbackGraceMs === 0) {
+            void startDispatchFallbackWatchdog(fallbackInput);
+        } else {
+            after(() => startDispatchFallbackWatchdog(fallbackInput));
+        }
         return { ok: true as const, runId };
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown enqueue error';

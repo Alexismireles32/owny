@@ -85,16 +85,19 @@ export async function POST(request: Request) {
             trigger: 'manual_retry',
         });
         const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        after(() =>
-            startDispatchFallbackWatchdog({
-                creatorId,
-                handle,
-                runId,
-                trigger: 'manual_retry',
-                source: 'pipeline_start',
-                graceMs: fallbackGraceMs,
-            })
-        );
+        const fallbackInput = {
+            creatorId,
+            handle,
+            runId,
+            trigger: 'manual_retry' as const,
+            source: 'pipeline_start',
+            graceMs: fallbackGraceMs,
+        };
+        if (fallbackGraceMs === 0) {
+            void startDispatchFallbackWatchdog(fallbackInput);
+        } else {
+            after(() => startDispatchFallbackWatchdog(fallbackInput));
+        }
 
         return NextResponse.json({
             message: 'Pipeline started via Inngest',

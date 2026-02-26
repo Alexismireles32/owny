@@ -84,16 +84,19 @@ export async function POST(request: Request) {
             trigger: 'dlq_replay',
         });
         const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        after(() =>
-            startDispatchFallbackWatchdog({
-                creatorId: creator.id,
-                handle: creator.handle,
-                runId,
-                trigger: 'dlq_replay',
-                source: 'pipeline_retry',
-                graceMs: fallbackGraceMs,
-            })
-        );
+        const fallbackInput = {
+            creatorId: creator.id,
+            handle: creator.handle,
+            runId,
+            trigger: 'dlq_replay' as const,
+            source: 'pipeline_retry',
+            graceMs: fallbackGraceMs,
+        };
+        if (fallbackGraceMs === 0) {
+            void startDispatchFallbackWatchdog(fallbackInput);
+        } else {
+            after(() => startDispatchFallbackWatchdog(fallbackInput));
+        }
         await markLatestDeadLetterReplayed(creator.id);
 
         log.info('Pipeline retry enqueued', {
