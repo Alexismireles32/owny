@@ -10,7 +10,7 @@ import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert } from '@/lib/inngest/reliability';
 
-const RUNNING_STATES = new Set(['scraping', 'transcribing', 'cleaning', 'clustering', 'extracting']);
+const RUNNING_STATES = new Set(['scraping', 'transcribing', 'indexing', 'cleaning', 'clustering', 'extracting']);
 const STALE_PIPELINE_MS = 2 * 60 * 1000;
 const AUTO_RETRY_MARKER = 'Auto-retry enqueued at ';
 

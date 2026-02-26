@@ -4,11 +4,27 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim());
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
 
 async function verifyAdmin(supabase: ReturnType<typeof createClient> extends Promise<infer T> ? T : never) {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !ADMIN_EMAILS.includes(user.email || '')) return null;
+    if (!user) return null;
+
+    // Allow explicit email allowlist for bootstrap environments.
+    if (ADMIN_EMAILS.length > 0 && ADMIN_EMAILS.includes(user.email || '')) {
+        return user;
+    }
+
+    const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
+
+    if (profile?.role !== 'admin') return null;
     return user;
 }
 

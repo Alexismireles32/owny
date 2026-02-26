@@ -23,6 +23,7 @@ export type PipelineStatus =
     | 'pending'
     | 'scraping'
     | 'transcribing'
+    | 'indexing'
     | 'cleaning'
     | 'clustering'
     | 'extracting'

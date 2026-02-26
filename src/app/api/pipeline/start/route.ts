@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     }
 
     // Don't restart if actively running
-    const runningStates = ['scraping', 'transcribing', 'cleaning', 'clustering', 'extracting'];
+    const runningStates = ['scraping', 'transcribing', 'indexing', 'cleaning', 'clustering', 'extracting'];
     if (runningStates.includes(creator.pipeline_status)) {
         return NextResponse.json({
             message: 'Pipeline already running',

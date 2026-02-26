@@ -1,2 +1,0 @@
--- Placeholder migration to reconcile local history with remote migration version 20260225143705.
--- The actual SQL for this version was applied directly on remote before this repo had the file.
