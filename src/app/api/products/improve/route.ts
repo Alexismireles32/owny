@@ -73,11 +73,26 @@ export async function POST(request: Request) {
         return new Response(JSON.stringify({ error: 'productId, instruction, and currentHtml required' }), { status: 400 });
     }
 
+    const { data: creator, error: creatorError } = await supabase
+        .from('creators')
+        .select('id')
+        .eq('profile_id', user.id)
+        .maybeSingle();
+
+    if (creatorError) {
+        return new Response(JSON.stringify({ error: creatorError.message }), { status: 500 });
+    }
+
+    if (!creator) {
+        return new Response(JSON.stringify({ error: 'Creator profile required' }), { status: 403 });
+    }
+
     const db = getServiceDb();
     const { data: product } = await db
         .from('products')
         .select('id, creator_id, title')
         .eq('id', productId)
+        .eq('creator_id', creator.id)
         .single();
 
     if (!product) {

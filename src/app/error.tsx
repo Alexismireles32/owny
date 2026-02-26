@@ -4,6 +4,7 @@
 // Next.js App Router: error.tsx renders when a route segment throws
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 export default function GlobalError({
     error,
@@ -57,7 +58,7 @@ export default function GlobalError({
                     >
                         Try Again
                     </button>
-                    <a
+                    <Link
                         href="/"
                         style={{
                             padding: '0.6rem 1.5rem',
@@ -71,7 +72,7 @@ export default function GlobalError({
                         }}
                     >
                         Go Home
-                    </a>
+                    </Link>
                 </div>
             </div>
         </div>

@@ -242,13 +242,29 @@ export async function POST(request: Request) {
         return new Response(JSON.stringify({ error: 'creatorId and message required' }), { status: 400 });
     }
 
+    // Enforce creator ownership using the authenticated user context.
+    const { data: ownedCreator, error: ownershipError } = await supabase
+        .from('creators')
+        .select('id')
+        .eq('id', creatorId)
+        .eq('profile_id', user.id)
+        .maybeSingle();
+
+    if (ownershipError) {
+        return new Response(JSON.stringify({ error: ownershipError.message }), { status: 500 });
+    }
+
+    if (!ownedCreator) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+    }
+
     const db = getServiceDb();
 
     // Verify creator
     const { data: creator } = await db
         .from('creators')
         .select('id, handle, display_name, bio, brand_tokens, voice_profile')
-        .eq('id', creatorId)
+        .eq('id', ownedCreator.id)
         .single();
 
     if (!creator) {
@@ -281,7 +297,7 @@ export async function POST(request: Request) {
                     && message.split(' ').length < 10;
 
                 // Run hybrid search to discover what content exists
-                const searchResults = await hybridSearch(db, creatorId, message, { limit: 100 });
+                const searchResults = await hybridSearch(db, creator.id, message, { limit: 100 });
 
                 if (searchResults.length === 0) {
                     send({
@@ -331,7 +347,7 @@ export async function POST(request: Request) {
 
                 // Re-search with specific topic if confirmed
                 const topicResults = body.confirmedTopic
-                    ? await hybridSearch(db, creatorId, topicQuery, { limit: 100 })
+                    ? await hybridSearch(db, creator.id, topicQuery, { limit: 100 })
                     : searchResults;
 
                 send({ type: 'status', message: `📊 Found ${topicResults.length} related videos. Selecting the best ones...`, phase: 'reranking' });
@@ -420,7 +436,7 @@ ${(t.transcript_text || t.description || '').slice(0, 2000)}
                 const { data: product, error: productError } = await db
                     .from('products')
                     .insert({
-                        creator_id: creatorId,
+                        creator_id: creator.id,
                         slug,
                         type: productType,
                         title: productTitle,

@@ -3,8 +3,6 @@
 // LivePreview — Sandboxed iframe for rendering AI-generated HTML
 // Uses srcdoc to inject HTML directly, updates in real-time as content streams
 
-import { useRef, useEffect, useState } from 'react';
-
 interface LivePreviewProps {
     html: string;
     isLoading?: boolean;
@@ -12,26 +10,6 @@ interface LivePreviewProps {
 }
 
 export default function LivePreview({ html, isLoading = false, className = '' }: LivePreviewProps) {
-    const iframeRef = useRef<HTMLIFrameElement>(null);
-    const [iframeKey, setIframeKey] = useState(0);
-
-    // Update iframe content when HTML changes
-    useEffect(() => {
-        if (!iframeRef.current || !html) return;
-
-        // Use srcdoc for sandboxed rendering
-        const iframe = iframeRef.current;
-
-        // For streaming: update srcdoc directly
-        // We use a blob URL approach for better performance during streaming
-        try {
-            iframe.srcdoc = html;
-        } catch {
-            // Fallback: force re-render with key change
-            setIframeKey((k) => k + 1);
-        }
-    }, [html]);
-
     if (!html && !isLoading) {
         return null;
     }
@@ -83,8 +61,6 @@ export default function LivePreview({ html, isLoading = false, className = '' }:
 
             {/* The iframe */}
             <iframe
-                key={iframeKey}
-                ref={iframeRef}
                 srcDoc={html || '<!DOCTYPE html><html><body></body></html>'}
                 className="w-full h-full border-0"
                 sandbox="allow-scripts allow-same-origin"

@@ -82,15 +82,13 @@ async function processWebhookEvent(
 
 describe('Webhook Idempotency', () => {
     let store: MockStripeEventsStore;
-    let handlerCallCount: number;
 
     const mockHandler = vi.fn(async () => {
-        handlerCallCount++;
+        return;
     });
 
     beforeEach(() => {
         store = new MockStripeEventsStore();
-        handlerCallCount = 0;
         mockHandler.mockClear();
     });
 

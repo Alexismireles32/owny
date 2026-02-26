@@ -2,6 +2,7 @@
 
 // Library error boundary — buyer-facing content viewer errors
 import { useEffect } from 'react';
+import Link from 'next/link';
 
 export default function LibraryError({
     error,
@@ -50,7 +51,7 @@ export default function LibraryError({
                     >
                         Try Again
                     </button>
-                    <a
+                    <Link
                         href="/library"
                         style={{
                             padding: '0.6rem 1.5rem',
@@ -64,7 +65,7 @@ export default function LibraryError({
                         }}
                     >
                         Back to Library
-                    </a>
+                    </Link>
                 </div>
             </div>
         </div>

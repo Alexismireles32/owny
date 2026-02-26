@@ -554,7 +554,10 @@ export function PipelineProgress({
 
             {/* Avatar */}
             {avatarUrl ? (
-                <img src={avatarUrl} alt={displayName} className="pipeline-avatar" />
+                <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={avatarUrl} alt={displayName} className="pipeline-avatar" />
+                </>
             ) : (
                 <div className="pipeline-avatar-placeholder">👤</div>
             )}

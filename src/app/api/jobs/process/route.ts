@@ -3,7 +3,7 @@
 // Intended to be called by Vercel Cron (e.g., every 1 minute)
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
 import { processBatch } from '@/lib/import/job-processor';
 import { log } from '@/lib/logger';
 
@@ -12,12 +12,17 @@ export async function POST(request: Request) {
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (!cronSecret) {
+        log.error('CRON_SECRET is not configured for jobs processor');
+        return NextResponse.json({ error: 'CRON_SECRET is not configured' }, { status: 500 });
+    }
+
+    if (authHeader !== `Bearer ${cronSecret}`) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     try {
-        const supabase = await createClient();
+        const supabase = createAdminClient();
         const result = await processBatch(supabase, 10);
 
         log.info('Job batch processed', {

@@ -4,6 +4,7 @@ import {
     createContext,
     useContext,
     useEffect,
+    useMemo,
     useState,
     useCallback,
     type ReactNode,
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [profile, setProfile] = useState<Profile | null>(null);
     const [creator, setCreator] = useState<Creator | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const supabase = createClient();
+    const supabase = useMemo(() => createClient(), []);
 
     const fetchProfile = useCallback(
         async (userId: string) => {

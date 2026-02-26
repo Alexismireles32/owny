@@ -5,6 +5,12 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { log } from '@/lib/logger';
 
+interface TakedownBody {
+    action?: 'takedown' | 'lift';
+    productId?: string;
+    reason?: string;
+}
+
 async function verifyAdmin() {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -20,16 +26,41 @@ async function verifyAdmin() {
     return { user, supabase };
 }
 
+function readFormString(value: FormDataEntryValue | null): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function parseTakedownBody(request: Request): Promise<TakedownBody | null> {
+    const contentType = request.headers.get('content-type') || '';
+
+    try {
+        if (contentType.includes('application/json')) {
+            return await request.json() as TakedownBody;
+        }
+
+        const formData = await request.formData();
+        return {
+            action: readFormString(formData.get('action')) as TakedownBody['action'],
+            productId: readFormString(formData.get('productId')),
+            reason: readFormString(formData.get('reason')),
+        };
+    } catch {
+        return null;
+    }
+}
+
 export async function POST(request: Request) {
     const { user, supabase } = await verifyAdmin();
     if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    const body = await request.json();
-    const { action, productId, reason } = body as {
-        action: 'takedown' | 'lift';
-        productId: string;
-        reason?: string;
-    };
+    const body = await parseTakedownBody(request);
+    if (!body) {
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+
+    const { action, productId, reason } = body;
 
     if (!productId) {
         return NextResponse.json({ error: 'productId is required' }, { status: 400 });

@@ -110,7 +110,6 @@ export default async function CreatorHubPage({ params }: Props) {
     const mutedText = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
     const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.9)';
     const cardBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
-    const cardHoverBorder = primary + '60';
     const heroGradient = isDark
         ? `linear-gradient(135deg, ${primary}30 0%, ${secondary}15 50%, transparent 100%)`
         : `linear-gradient(135deg, ${primary}15 0%, ${secondary}08 50%, transparent 100%)`;
@@ -123,7 +122,6 @@ export default async function CreatorHubPage({ params }: Props) {
 
     return (
         <>
-            {/* eslint-disable-next-line @next/next/no-page-custom-font */}
             <link rel="stylesheet" href={googleFontUrl} />
             <div
                 className="min-h-screen"
@@ -148,15 +146,18 @@ export default async function CreatorHubPage({ params }: Props) {
                     />
                     <div className="container mx-auto max-w-2xl text-center relative z-10">
                         {creator.avatar_url && (
-                            <img
-                                src={creator.avatar_url}
-                                alt={creator.display_name}
-                                className="w-24 h-24 rounded-full mx-auto mb-5 border-4 shadow-xl object-cover"
-                                style={{
-                                    borderColor: primary + '40',
-                                    boxShadow: `0 8px 32px ${primary}20`,
-                                }}
-                            />
+                            <>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={creator.avatar_url}
+                                    alt={creator.display_name}
+                                    className="w-24 h-24 rounded-full mx-auto mb-5 border-4 shadow-xl object-cover"
+                                    style={{
+                                        borderColor: primary + '40',
+                                        boxShadow: `0 8px 32px ${primary}20`,
+                                    }}
+                                />
+                            </>
                         )}
                         <h1
                             className="text-4xl font-bold tracking-tight"

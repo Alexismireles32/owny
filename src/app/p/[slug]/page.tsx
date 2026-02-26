@@ -233,11 +233,14 @@ export default async function ProductPage({ params }: Props) {
                 {/* Creator card */}
                 <div className="flex items-center justify-center gap-3 mb-8">
                     {creator?.avatar_url && (
-                        <img
-                            src={creator.avatar_url}
-                            alt={creator.display_name}
-                            className="w-10 h-10 rounded-full object-cover"
-                        />
+                        <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                                src={creator.avatar_url}
+                                alt={creator.display_name}
+                                className="w-10 h-10 rounded-full object-cover"
+                            />
+                        </>
                     )}
                     <div className="text-sm">
                         <p className="font-medium">{creator?.display_name}</p>

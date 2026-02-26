@@ -6,10 +6,39 @@ import { NextResponse } from 'next/server';
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim());
 
+interface AdminCreatorBody {
+    action?: string;
+    creatorId?: string;
+}
+
 async function verifyAdmin(supabase: ReturnType<typeof createClient> extends Promise<infer T> ? T : never) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !ADMIN_EMAILS.includes(user.email || '')) return null;
     return user;
+}
+
+function readFormString(value: FormDataEntryValue | null): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function parseAdminCreatorBody(request: Request): Promise<AdminCreatorBody | null> {
+    const contentType = request.headers.get('content-type') || '';
+
+    try {
+        if (contentType.includes('application/json')) {
+            return await request.json() as AdminCreatorBody;
+        }
+
+        const formData = await request.formData();
+        return {
+            action: readFormString(formData.get('action')),
+            creatorId: readFormString(formData.get('creatorId')),
+        };
+    } catch {
+        return null;
+    }
 }
 
 export async function GET() {
@@ -32,7 +61,10 @@ export async function POST(request: Request) {
     const user = await verifyAdmin(supabase);
     if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    const { action, creatorId } = await request.json();
+    const body = await parseAdminCreatorBody(request);
+    if (!body) return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+
+    const { action, creatorId } = body;
 
     if (action === 'takedown' && creatorId) {
         // Mark all creator's products as taken down

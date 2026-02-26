@@ -79,8 +79,27 @@ function formatMessageTime(value: Date): string {
     return `${hh}:${mm}`;
 }
 
+function loadPersistedMessages(creatorId: string): ChatMessage[] {
+    if (typeof window === 'undefined') return [];
+
+    try {
+        const saved = window.localStorage.getItem(`owny-builder-${creatorId}`);
+        if (!saved) return [];
+
+        const parsed = JSON.parse(saved) as { messages?: ChatMessage[] };
+        if (!Array.isArray(parsed.messages)) return [];
+
+        return parsed.messages.map((m) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+        }));
+    } catch {
+        return [];
+    }
+}
+
 export function ProductBuilder({ creatorId, displayName, onProductCreated }: ProductBuilderProps) {
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messages, setMessages] = useState<ChatMessage[]>(() => loadPersistedMessages(creatorId));
     const [input, setInput] = useState('');
     const [buildState, setBuildState] = useState<BuildState>({
         productId: null,
@@ -93,32 +112,17 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const [composerError, setComposerError] = useState<string | null>(null);
     const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop');
     const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
-    const [sourceVideos, setSourceVideos] = useState<SourceVideo[]>([]);
     const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'published'>('idle');
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const abortRef = useRef<AbortController | null>(null);
-    const messageCounterRef = useRef(0);
+    const messageCounterRef = useRef(messages.length);
     const sectionCountRef = useRef(0);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
-
-    // Persist chat to localStorage
-    useEffect(() => {
-        try {
-            const saved = localStorage.getItem(`owny-builder-${creatorId}`);
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed.messages)) {
-                    setMessages(parsed.messages.map((m: ChatMessage) => ({ ...m, timestamp: new Date(m.timestamp) })));
-                    messageCounterRef.current = parsed.messages.length;
-                }
-            }
-        } catch { /* ignore corrupt state */ }
-    }, [creatorId]);
 
     useEffect(() => {
         if (messages.length > 0) {
@@ -227,7 +231,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
                             if (eventType === 'source_videos') {
                                 const videos = Array.isArray(event.videos) ? event.videos as SourceVideo[] : [];
-                                setSourceVideos(videos);
                                 if (videos.length > 0) {
                                     addMessage({
                                         role: 'status',
@@ -395,7 +398,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
         setMessages([]);
         setBuildState({ productId: null, versionId: null, html: '', isBuilding: false, phase: '' });
         setVersionHistory([]);
-        setSourceVideos([]);
         setPublishStatus('idle');
         localStorage.removeItem(`owny-builder-${creatorId}`);
     }, [creatorId]);
