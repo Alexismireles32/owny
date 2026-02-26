@@ -6,6 +6,7 @@
 import { useRouter } from 'next/navigation';
 import { VibeBuilder } from '@/components/builder/vibe-builder';
 import type { ProductDSL } from '@/types/product-dsl';
+import { getApiErrorMessage, readJsonSafe } from '@/lib/utils';
 
 interface Props {
     productId: string;
@@ -20,7 +21,7 @@ export function BuilderPageClient({ productId, initialDsl, initialHtml, buildPac
     const router = useRouter();
 
     async function handleSave(dsl: ProductDSL, html: string | null) {
-        await fetch(`/api/products/${productId}/versions`, {
+        const res = await fetch(`/api/products/${productId}/versions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -29,12 +30,23 @@ export function BuilderPageClient({ productId, initialDsl, initialHtml, buildPac
                 buildPacket: buildPacket || {},
             }),
         });
+
+        if (!res.ok) {
+            const payload = await readJsonSafe<{ error?: string }>(res);
+            throw new Error(getApiErrorMessage(payload, 'Failed to save product changes.'));
+        }
     }
 
     async function handlePublish() {
-        await fetch(`/api/products/${productId}/publish`, {
+        const res = await fetch(`/api/products/${productId}/publish`, {
             method: 'POST',
         });
+
+        if (!res.ok) {
+            const payload = await readJsonSafe<{ error?: string }>(res);
+            throw new Error(getApiErrorMessage(payload, 'Failed to publish this product.'));
+        }
+
         router.push(`/products/${productId}`);
     }
 

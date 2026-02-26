@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 interface Props {
     productId: string;
@@ -29,6 +30,7 @@ export function ContentProgressTracker({
     const initialCompleted = (initialProgress.completedBlockIds as string[]) || [];
     const [completedIds, setCompletedIds] = useState<string[]>(initialCompleted);
     const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     const percentComplete = blocks.length > 0
         ? Math.round((completedIds.length / blocks.length) * 100)
@@ -47,8 +49,9 @@ export function ContentProgressTracker({
 
         // Persist to DB
         setSaving(true);
+        setSaveError(null);
         try {
-            await fetch('/api/progress', {
+            const res = await fetch('/api/progress', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -57,8 +60,19 @@ export function ContentProgressTracker({
                     percentComplete: newPercent,
                 }),
             });
-        } catch { /* ignore */ }
-        setSaving(false);
+            const payload = await readJsonSafe<{ error?: string }>(res);
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    window.location.href = '/sign-in?next=%2Flibrary';
+                    return;
+                }
+                setSaveError(getApiErrorMessage(payload, 'Could not save progress.'));
+            }
+        } catch {
+            setSaveError('Network error while saving progress.');
+        } finally {
+            setSaving(false);
+        }
     }
 
     return (
@@ -128,6 +142,9 @@ export function ContentProgressTracker({
 
             {saving && (
                 <p className="text-xs text-muted-foreground text-center">Saving…</p>
+            )}
+            {saveError && (
+                <p className="text-xs text-destructive text-center">{saveError}</p>
             )}
 
             {blocks.length === 0 && (

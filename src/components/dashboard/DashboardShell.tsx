@@ -1,20 +1,17 @@
 'use client';
 
-// DashboardShell — Split-pane layout
-// Left 40%: StorefrontPreview (mobile frame + design prompt) with Preview/Analytics tabs
-// Right 60%: Toggle between ProductBuilder (Lovable-style chatbox) and ProductList (drafts/published)
-
 import { useState } from 'react';
 import { StorefrontPreview } from './StorefrontPreview';
 import { AnalyticsPanel } from './AnalyticsPanel';
 import { ProductBuilder } from './ProductBuilder';
 import { ProductList } from './ProductList';
+import { WelcomeTour } from './WelcomeTour';
+import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 interface DashboardShellProps {
     creatorId: string;
     handle: string;
     displayName: string;
-    avatarUrl: string | null;
     stats: {
         revenue: number;
         sales: number;
@@ -37,7 +34,6 @@ export function DashboardShell({
     creatorId,
     handle,
     displayName,
-    avatarUrl,
     stats,
     products: initialProducts,
 }: DashboardShellProps) {
@@ -45,155 +41,227 @@ export function DashboardShell({
     const [rightTab, setRightTab] = useState<RightTab>('builder');
     const [storefrontKey, setStorefrontKey] = useState(0);
     const [products, setProducts] = useState(initialProducts);
+    const [productsError, setProductsError] = useState<string | null>(null);
 
     const refreshStorefront = () => setStorefrontKey((k) => k + 1);
+
     const refreshProducts = async () => {
+        setProductsError(null);
         try {
             const res = await fetch('/api/products');
-            if (res.ok) {
-                const data = await res.json();
-                setProducts((data.products || []).map((p: Record<string, unknown>) => ({
-                    id: p.id as string,
-                    title: p.title as string,
-                    type: p.type as string,
-                    status: p.status as string,
-                    slug: p.slug as string,
-                    created_at: p.created_at as string,
-                })));
+            const data = await readJsonSafe<{ products?: Record<string, unknown>[]; error?: string }>(res);
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    window.location.href = '/sign-in?next=%2Fdashboard';
+                    return;
+                }
+                setProductsError(getApiErrorMessage(data, 'Could not refresh products.'));
+                return;
             }
-        } catch { /* silent — will retry on next action */ }
+
+            setProducts((data?.products || []).map((p: Record<string, unknown>) => ({
+                id: p.id as string,
+                title: p.title as string,
+                type: p.type as string,
+                status: p.status as string,
+                slug: p.slug as string,
+                created_at: p.created_at as string,
+            })));
+        } catch {
+            setProductsError('Network error while refreshing products.');
+        }
     };
 
     return (
-        <div className="dashboard-shell">
-            <style>{`
-                .dashboard-shell {
-                    display: flex;
-                    height: calc(100vh - 64px);
-                    overflow: hidden;
-                    background: #0f0f1a;
-                }
-                .dash-left {
-                    width: 40%;
-                    min-width: 340px;
-                    display: flex;
-                    flex-direction: column;
-                    border-right: 1px solid rgba(255,255,255,0.06);
-                }
-                .dash-right {
-                    width: 60%;
-                    flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                }
-                .dash-tabs {
-                    display: flex;
-                    gap: 0;
-                    border-bottom: 1px solid rgba(255,255,255,0.06);
-                    padding: 0 1rem;
-                }
-                .dash-tab {
-                    padding: 0.75rem 1rem;
-                    font-size: 0.8rem;
-                    font-weight: 600;
-                    color: rgba(255,255,255,0.4);
-                    cursor: pointer;
-                    border-bottom: 2px solid transparent;
-                    transition: all 0.2s;
-                    background: none;
-                    border-top: none;
-                    border-left: none;
-                    border-right: none;
-                    font-family: inherit;
-                }
-                .dash-tab:hover { color: rgba(255,255,255,0.7); }
-                .dash-tab.active {
-                    color: white;
-                    border-bottom-color: #8b5cf6;
-                }
-                .dash-panel {
-                    flex: 1;
-                    overflow: hidden;
-                    display: flex;
-                    flex-direction: column;
-                }
-                @media (max-width: 768px) {
-                    .dashboard-shell {
+        <>
+            {initialProducts.length === 0 && <WelcomeTour displayName={displayName} />}
+
+            <div className="shell-root">
+                <style>{`
+                    .shell-root {
+                        --shell-line: rgba(255, 255, 255, 0.12);
+                        --shell-muted: rgba(226, 232, 240, 0.58);
+                        --shell-text: rgba(241, 245, 249, 0.94);
+                        position: relative;
+                        display: flex;
+                        height: calc(100vh - 64px);
+                        overflow: hidden;
+                        background:
+                            radial-gradient(900px 320px at 10% -10%, rgba(34, 211, 238, 0.14), transparent 62%),
+                            radial-gradient(900px 320px at 90% -12%, rgba(245, 158, 11, 0.14), transparent 62%),
+                            linear-gradient(145deg, #07101f, #101d2d 52%, #12253b);
+                    }
+                    .shell-root::before {
+                        content: '';
+                        position: absolute;
+                        inset: 0;
+                        pointer-events: none;
+                        background-image:
+                            linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+                            linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+                        background-size: 40px 40px;
+                        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 96%);
+                    }
+                    .shell-left,
+                    .shell-right {
+                        position: relative;
+                        z-index: 1;
+                        min-height: 0;
+                        display: flex;
                         flex-direction: column;
                     }
-                    .dash-left, .dash-right {
-                        width: 100%;
-                        min-width: unset;
-                        height: 50vh;
+                    .shell-left {
+                        width: 40%;
+                        min-width: 340px;
+                        border-right: 1px solid var(--shell-line);
+                        background: rgba(4, 10, 18, 0.5);
                     }
-                }
-            `}</style>
+                    .shell-right {
+                        width: 60%;
+                        flex: 1;
+                        background: rgba(5, 11, 20, 0.34);
+                    }
+                    .shell-tabs {
+                        display: flex;
+                        gap: 0.45rem;
+                        padding: 0.75rem 0.85rem;
+                        border-bottom: 1px solid var(--shell-line);
+                        background: rgba(2, 8, 16, 0.68);
+                        backdrop-filter: blur(10px);
+                    }
+                    .shell-tab {
+                        border: 1px solid transparent;
+                        background: rgba(255, 255, 255, 0.05);
+                        color: var(--shell-muted);
+                        border-radius: 0.72rem;
+                        font-size: 0.74rem;
+                        font-weight: 600;
+                        letter-spacing: 0.02em;
+                        padding: 0.5rem 0.7rem;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                        font-family: inherit;
+                        white-space: nowrap;
+                    }
+                    .shell-tab:hover {
+                        color: rgba(241, 245, 249, 0.88);
+                        border-color: rgba(34, 211, 238, 0.25);
+                    }
+                    .shell-tab.active {
+                        color: var(--shell-text);
+                        border-color: rgba(34, 211, 238, 0.44);
+                        background: linear-gradient(145deg, rgba(34, 211, 238, 0.17), rgba(8, 145, 178, 0.16));
+                        box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.2);
+                    }
+                    .shell-panel {
+                        flex: 1;
+                        min-height: 0;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                    }
+                    .shell-error {
+                        margin: 0.7rem 0.9rem 0;
+                        border-radius: 0.8rem;
+                        border: 1px solid rgba(248, 113, 113, 0.33);
+                        background: rgba(248, 113, 113, 0.11);
+                        color: #fecaca;
+                        font-size: 0.74rem;
+                        padding: 0.55rem 0.7rem;
+                    }
+                    @media (max-width: 980px) {
+                        .shell-root {
+                            flex-direction: column;
+                            height: auto;
+                            min-height: calc(100vh - 64px);
+                        }
+                        .shell-left,
+                        .shell-right {
+                            width: 100%;
+                            min-width: 0;
+                        }
+                        .shell-left {
+                            border-right: none;
+                            border-bottom: 1px solid var(--shell-line);
+                            min-height: 50vh;
+                        }
+                        .shell-right {
+                            min-height: 50vh;
+                        }
+                    }
+                `}</style>
 
-            {/* Left Panel: Storefront Preview / Analytics */}
-            <div className="dash-left">
-                <div className="dash-tabs">
-                    <button
-                        className={`dash-tab ${leftTab === 'preview' ? 'active' : ''}`}
-                        onClick={() => setLeftTab('preview')}
-                    >
-                        📱 Preview
-                    </button>
-                    <button
-                        className={`dash-tab ${leftTab === 'analytics' ? 'active' : ''}`}
-                        onClick={() => setLeftTab('analytics')}
-                    >
-                        📊 Analytics
-                    </button>
+                <div className="shell-left">
+                    <div className="shell-tabs">
+                        <button
+                            type="button"
+                            className={`shell-tab ${leftTab === 'preview' ? 'active' : ''}`}
+                            onClick={() => setLeftTab('preview')}
+                        >
+                            Preview Studio
+                        </button>
+                        <button
+                            type="button"
+                            className={`shell-tab ${leftTab === 'analytics' ? 'active' : ''}`}
+                            onClick={() => setLeftTab('analytics')}
+                        >
+                            Performance
+                        </button>
+                    </div>
+                    <div className="shell-panel">
+                        {leftTab === 'preview' ? (
+                            <StorefrontPreview
+                                handle={handle}
+                                storefrontKey={storefrontKey}
+                                onRestyle={refreshStorefront}
+                                creatorId={creatorId}
+                            />
+                        ) : (
+                            <AnalyticsPanel stats={stats} handle={handle} />
+                        )}
+                    </div>
                 </div>
-                <div className="dash-panel">
-                    {leftTab === 'preview' ? (
-                        <StorefrontPreview
-                            handle={handle}
-                            storefrontKey={storefrontKey}
-                            onRestyle={refreshStorefront}
-                            creatorId={creatorId}
-                        />
-                    ) : (
-                        <AnalyticsPanel stats={stats} handle={handle} />
-                    )}
+
+                <div className="shell-right">
+                    <div className="shell-tabs">
+                        <button
+                            type="button"
+                            className={`shell-tab ${rightTab === 'builder' ? 'active' : ''}`}
+                            onClick={() => setRightTab('builder')}
+                        >
+                            Product Generator
+                        </button>
+                        <button
+                            type="button"
+                            className={`shell-tab ${rightTab === 'products' ? 'active' : ''}`}
+                            onClick={() => setRightTab('products')}
+                        >
+                            Product Inventory ({products.length})
+                        </button>
+                    </div>
+                    {productsError && <div className="shell-error">{productsError}</div>}
+                    <div className="shell-panel">
+                        {rightTab === 'builder' ? (
+                            <ProductBuilder
+                                creatorId={creatorId}
+                                displayName={displayName}
+                                onProductCreated={() => {
+                                    void refreshProducts();
+                                    refreshStorefront();
+                                }}
+                            />
+                        ) : (
+                            <ProductList
+                                products={products}
+                                onRefresh={() => {
+                                    void refreshProducts();
+                                }}
+                                onPublishToggle={refreshStorefront}
+                            />
+                        )}
+                    </div>
                 </div>
             </div>
-
-            {/* Right Panel: Builder / Product List */}
-            <div className="dash-right">
-                <div className="dash-tabs">
-                    <button
-                        className={`dash-tab ${rightTab === 'builder' ? 'active' : ''}`}
-                        onClick={() => setRightTab('builder')}
-                    >
-                        ✨ Create Product
-                    </button>
-                    <button
-                        className={`dash-tab ${rightTab === 'products' ? 'active' : ''}`}
-                        onClick={() => setRightTab('products')}
-                    >
-                        📦 My Products ({products.length})
-                    </button>
-                </div>
-                <div className="dash-panel">
-                    {rightTab === 'builder' ? (
-                        <ProductBuilder
-                            creatorId={creatorId}
-                            displayName={displayName}
-                            onProductCreated={() => {
-                                refreshProducts();
-                                refreshStorefront();
-                            }}
-                        />
-                    ) : (
-                        <ProductList
-                            products={products}
-                            onRefresh={refreshProducts}
-                            onPublishToggle={refreshStorefront}
-                        />
-                    )}
-                </div>
-            </div>
-        </div>
+        </>
     );
 }

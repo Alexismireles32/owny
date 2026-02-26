@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 interface LibraryItem {
     id: string;
@@ -34,14 +35,31 @@ interface LibraryItem {
 export default function LibraryPage() {
     const [items, setItems] = useState<LibraryItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchLibrary = useCallback(async () => {
+        setError(null);
         try {
             const res = await fetch('/api/library');
-            const data = await res.json();
-            setItems(data.entitlements || []);
-        } catch { /* ignore */ }
-        setLoading(false);
+            const data = await readJsonSafe<{ entitlements?: LibraryItem[]; error?: string }>(res);
+
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    window.location.href = '/sign-in?next=%2Flibrary';
+                    return;
+                }
+                setItems([]);
+                setError(getApiErrorMessage(data, 'Failed to load your library.'));
+                return;
+            }
+
+            setItems(data?.entitlements || []);
+        } catch {
+            setItems([]);
+            setError('Network error while loading your library.');
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
@@ -66,6 +84,13 @@ export default function LibraryPage() {
             <main className="container mx-auto max-w-3xl px-4 py-8">
                 {loading ? (
                     <p className="text-center text-muted-foreground py-12">Loading your library…</p>
+                ) : error ? (
+                    <div className="text-center py-16">
+                        <p className="text-destructive mb-4">{error}</p>
+                        <Button variant="outline" onClick={() => void fetchLibrary()}>
+                            Retry
+                        </Button>
+                    </div>
                 ) : items.length === 0 ? (
                     <div className="text-center py-16">
                         <p className="text-4xl mb-4">📚</p>
@@ -131,10 +156,22 @@ export default function LibraryPage() {
                                                 size="sm"
                                                 onClick={async () => {
                                                     const res = await fetch(`/api/content/${item.products.slug}/download`);
-                                                    const data = await res.json();
-                                                    if (data.downloadUrl) {
-                                                        window.open(data.downloadUrl, '_blank');
+                                                    const data = await readJsonSafe<{ downloadUrl?: string; error?: string }>(res);
+                                                    if (!res.ok) {
+                                                        if (isAuthStatus(res.status)) {
+                                                            window.location.href = `/sign-in?next=${encodeURIComponent('/library')}`;
+                                                            return;
+                                                        }
+                                                        setError(getApiErrorMessage(data, 'Could not prepare your PDF download.'));
+                                                        return;
                                                     }
+
+                                                    if (data?.downloadUrl) {
+                                                        window.open(data.downloadUrl, '_blank');
+                                                        return;
+                                                    }
+
+                                                    setError('Could not prepare your PDF download.');
                                                 }}
                                             >
                                                 ⬇ PDF

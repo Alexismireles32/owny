@@ -4,8 +4,10 @@
 // The single entry point for all digital product creation
 // Per SCRAPE_CREATORS_FLOW.md §Main Entry Point
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import { getApiErrorMessage, readJsonSafe } from '@/lib/utils';
 
 const HANDLE_REGEX = /^[a-zA-Z0-9._]{1,24}$/;
 
@@ -16,6 +18,7 @@ interface HandleInputProps {
 
 export function HandleInput({ onSuccess, initialHandle = '' }: HandleInputProps) {
     const router = useRouter();
+    const supabase = useMemo(() => createClient(), []);
     const [handle, setHandle] = useState(initialHandle);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -49,13 +52,40 @@ export function HandleInput({ onSuccess, initialHandle = '' }: HandleInputProps)
         setLoading(true);
 
         try {
-            const res = await fetch('/api/scrape/profile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ handle: normalized }),
-            });
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                void fetch('/api/scrape/prefetch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handle: normalized }),
+                    keepalive: true,
+                }).catch(() => {
+                    // Best effort only.
+                });
 
-            const data = await res.json();
+                setLoading(false);
+                router.push(`/sign-up?handle=${encodeURIComponent(normalized)}`);
+                return;
+            }
+
+            let res: Response | null = null;
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                res = await fetch('/api/scrape/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handle: normalized }),
+                });
+                if (res.status !== 401) break;
+                await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+            }
+
+            if (!res) {
+                setError('Could not connect your profile. Please try again.');
+                setLoading(false);
+                return;
+            }
+
+            const data = await readJsonSafe<{ error?: string; creatorId?: string }>(res);
 
             if (res.status === 429) {
                 const retry = parseInt(res.headers.get('Retry-After') || '60', 10);
@@ -87,10 +117,17 @@ export function HandleInput({ onSuccess, initialHandle = '' }: HandleInputProps)
                         // Best effort only.
                     });
 
+                    setLoading(false);
                     router.push(`/sign-up?handle=${encodeURIComponent(normalized)}`);
                     return;
                 }
-                setError(data.error || 'Something went wrong. Please try again.');
+                setError(getApiErrorMessage(data, 'Something went wrong. Please try again.'));
+                setLoading(false);
+                return;
+            }
+
+            if (!data?.creatorId) {
+                setError('Unexpected response while connecting your profile. Please try again.');
                 setLoading(false);
                 return;
             }
@@ -106,7 +143,7 @@ export function HandleInput({ onSuccess, initialHandle = '' }: HandleInputProps)
             setError('Network error. Please check your connection and try again.');
             setLoading(false);
         }
-    }, [handle, onSuccess, router]);
+    }, [handle, onSuccess, router, supabase]);
 
     return (
         <form onSubmit={handleSubmit} className="w-full max-w-md mx-auto">

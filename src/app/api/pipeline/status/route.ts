@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     // Fetch creator pipeline status
     const { data: creator, error: creatorError } = await supabase
         .from('creators')
-        .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, visual_dna, voice_profile, bio, updated_at')
+        .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, pipeline_run_id, visual_dna, voice_profile, bio, updated_at')
         .eq('id', creatorId)
         .single();
 
@@ -58,12 +58,27 @@ export async function GET(request: Request) {
 
         if (isStale) {
             const db = getServiceDb();
-            const [{ count: videos = 0 }, { count: transcripts = 0 }] = await Promise.all([
+            const [runRow, { count: videos = 0 }, { count: transcripts = 0 }] = await Promise.all([
+                creator.pipeline_run_id
+                    ? db
+                        .from('pipeline_runs')
+                        .select('status, last_heartbeat_at')
+                        .eq('run_id', creator.pipeline_run_id)
+                        .maybeSingle()
+                    : Promise.resolve({ data: null, error: null }),
                 db.from('videos').select('id', { count: 'exact', head: true }).eq('creator_id', creator.id),
                 db.from('video_transcripts').select('id', { count: 'exact', head: true }).eq('creator_id', creator.id),
             ]);
 
-            if ((videos || 0) === 0 && (transcripts || 0) === 0) {
+            const heartbeatMs = runRow?.data?.last_heartbeat_at
+                ? new Date(runRow.data.last_heartbeat_at).getTime()
+                : 0;
+            const runIsActivelyHeartbeating =
+                runRow?.data?.status === 'running' &&
+                heartbeatMs > 0 &&
+                Date.now() - heartbeatMs <= STALE_PIPELINE_MS;
+
+            if (!runIsActivelyHeartbeating) {
                 const alreadyRetried =
                     typeof creator.pipeline_error === 'string' &&
                     creator.pipeline_error.startsWith(AUTO_RETRY_MARKER);
@@ -80,7 +95,7 @@ export async function GET(request: Request) {
 
                     const { data: refreshed } = await db
                         .from('creators')
-                        .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, visual_dna, voice_profile, bio, updated_at')
+                        .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, pipeline_run_id, visual_dna, voice_profile, bio, updated_at')
                         .eq('id', creator.id)
                         .single();
 
@@ -134,6 +149,9 @@ export async function GET(request: Request) {
                         runId: 'auto-recovery',
                         details: {
                             handle: creator.handle,
+                            videos,
+                            transcripts,
+                            lastHeartbeatAt: runRow?.data?.last_heartbeat_at || null,
                         },
                     });
                     await db
@@ -148,7 +166,7 @@ export async function GET(request: Request) {
 
                 const { data: refreshed } = await db
                     .from('creators')
-                    .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, visual_dna, voice_profile, bio, updated_at')
+                    .select('id, profile_id, handle, display_name, avatar_url, pipeline_status, pipeline_error, pipeline_run_id, visual_dna, voice_profile, bio, updated_at')
                     .eq('id', creator.id)
                     .single();
 

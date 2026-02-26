@@ -6,7 +6,8 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 export default function ConnectStripePage() {
     return (
@@ -17,6 +18,7 @@ export default function ConnectStripePage() {
 }
 
 function ConnectStripeContent() {
+    const router = useRouter();
     const searchParams = useSearchParams();
     const justCompleted = searchParams.get('completed') === 'true';
 
@@ -25,17 +27,42 @@ function ConnectStripeContent() {
         chargesEnabled: boolean;
         payoutsEnabled: boolean;
     } | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [checking, setChecking] = useState(true);
 
     const fetchStatus = useCallback(async () => {
+        setError(null);
         try {
             const res = await fetch('/api/stripe/connect/status');
-            const data = await res.json();
-            setStatus(data);
-        } catch { /* ignore */ }
-        setChecking(false);
-    }, []);
+            const data = await readJsonSafe<{
+                status?: string;
+                chargesEnabled?: boolean;
+                payoutsEnabled?: boolean;
+                error?: string;
+            }>(res);
+
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    router.replace('/sign-in?next=%2Fconnect-stripe');
+                    return;
+                }
+                setError(getApiErrorMessage(data, 'Could not load Stripe status.'));
+                setStatus(null);
+                return;
+            }
+
+            setStatus({
+                status: data?.status || 'unconnected',
+                chargesEnabled: Boolean(data?.chargesEnabled),
+                payoutsEnabled: Boolean(data?.payoutsEnabled),
+            });
+        } catch {
+            setError('Network error while checking Stripe status.');
+        } finally {
+            setChecking(false);
+        }
+    }, [router]);
 
     useEffect(() => {
         const load = async () => { await fetchStatus(); };
@@ -52,14 +79,31 @@ function ConnectStripeContent() {
 
     async function handleConnect() {
         setLoading(true);
+        setError(null);
         try {
             const res = await fetch('/api/stripe/connect/onboard', { method: 'POST' });
-            const data = await res.json();
-            if (data.url) {
-                window.location.href = data.url;
+            const data = await readJsonSafe<{ url?: string; error?: string }>(res);
+
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    router.replace('/sign-in?next=%2Fconnect-stripe');
+                    return;
+                }
+                setError(getApiErrorMessage(data, 'Could not start Stripe onboarding.'));
+                return;
             }
-        } catch { /* ignore */ }
-        setLoading(false);
+
+            if (data?.url) {
+                window.location.href = data.url;
+                return;
+            }
+
+            setError('Stripe did not return an onboarding link. Please retry.');
+        } catch {
+            setError('Network error while starting Stripe onboarding.');
+        } finally {
+            setLoading(false);
+        }
     }
 
     const isConnected = status?.status === 'connected';
@@ -104,6 +148,11 @@ function ConnectStripeContent() {
                             <p className="text-sm text-muted-foreground text-center">Checking status…</p>
                         ) : (
                             <>
+                                {error && (
+                                    <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                        {error}
+                                    </p>
+                                )}
                                 <div className="flex items-center justify-between py-2">
                                     <span className="text-sm">Account Status</span>
                                     <Badge

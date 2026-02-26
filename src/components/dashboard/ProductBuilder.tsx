@@ -1,9 +1,8 @@
 'use client';
 
-// ProductBuilder — Lovable-style chat interface for creating digital products
-// Users type prompts → AI generates products from their content
-
 import { useState, useRef, useEffect, useCallback } from 'react';
+import LivePreview from './LivePreview';
+import { getApiErrorMessage, readJsonSafe } from '@/lib/utils';
 
 interface ProductBuilderProps {
     creatorId: string;
@@ -13,287 +12,927 @@ interface ProductBuilderProps {
 
 interface ChatMessage {
     id: string;
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'status';
     content: string;
     timestamp: Date;
-    productId?: string;
+    topicSuggestions?: { topic: string; videoCount: number }[];
+    productType?: string;
+}
+
+interface BuildState {
+    productId: string | null;
+    versionId: string | null;
+    html: string;
+    isBuilding: boolean;
+    phase: string;
 }
 
 const SUGGESTIONS = [
-    { icon: '📄', label: 'Create a PDF guide' },
-    { icon: '🎓', label: 'Build a mini course' },
-    { icon: '🔥', label: 'Make a 7-day challenge' },
-    { icon: '✅', label: 'Create a checklist toolkit' },
+    { icon: 'DOC', label: 'Create a PDF guide', type: 'pdf_guide' as const },
+    { icon: 'CRS', label: 'Build a mini course', type: 'mini_course' as const },
+    { icon: '7DY', label: 'Make a 7-day challenge', type: 'challenge_7day' as const },
+    { icon: 'KIT', label: 'Create a checklist toolkit', type: 'checklist_toolkit' as const },
 ];
 
+const BUILD_PHASES = [
+    { key: 'analyzing', label: 'Analyze' },
+    { key: 'retrieving', label: 'Retrieve' },
+    { key: 'planning', label: 'Plan' },
+    { key: 'building', label: 'Build' },
+    { key: 'saving', label: 'Save' },
+] as const;
+
+function normalizePhase(phase: string): string {
+    if (phase === 'init') return 'analyzing';
+    if (phase === 'reranking' || phase === 'extracting') return 'retrieving';
+    if (phase === 'fallback') return 'building';
+    if (phase === 'complete') return 'saving';
+    return phase;
+}
+
+function phaseIndex(phase: string): number {
+    const normalized = normalizePhase(phase);
+    const idx = BUILD_PHASES.findIndex((item) => item.key === normalized);
+    return idx >= 0 ? idx : 0;
+}
+
+function sanitizeMessageText(content: string): string {
+    return content.replace(/\*\*(.*?)\*\*/g, '$1').trim();
+}
+
+function formatMessageTime(value: Date): string {
+    const hh = String(value.getHours()).padStart(2, '0');
+    const mm = String(value.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+}
+
 export function ProductBuilder({ creatorId, displayName, onProductCreated }: ProductBuilderProps) {
-    const [messages, setMessages] = useState<ChatMessage[]>([
-        {
-            id: 'welcome',
-            role: 'assistant',
-            content: `Hey ${displayName}! 👋 I can turn your TikTok content into digital products. What would you like to create?`,
-            timestamp: new Date(),
-        },
-    ]);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
-    const [isGenerating, setIsGenerating] = useState(false);
+    const [buildState, setBuildState] = useState<BuildState>({
+        productId: null,
+        versionId: null,
+        html: '',
+        isBuilding: false,
+        phase: '',
+    });
+    const [pendingProductType, setPendingProductType] = useState<string | null>(null);
+    const [composerError, setComposerError] = useState<string | null>(null);
+
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const abortRef = useRef<AbortController | null>(null);
+    const messageCounterRef = useRef(0);
 
-    // Auto-scroll to latest message
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    const addMessage = (role: ChatMessage['role'], content: string, productId?: string) => {
-        const msg: ChatMessage = {
-            id: Date.now().toString(),
-            role,
-            content,
-            timestamp: new Date(),
-            productId,
-        };
-        setMessages((prev) => [...prev, msg]);
-        return msg;
+    const nextMessageId = () => {
+        messageCounterRef.current += 1;
+        return `msg-${messageCounterRef.current}`;
     };
 
-    const handleSubmit = useCallback(async (prompt?: string) => {
-        const text = prompt || input.trim();
-        if (!text || isGenerating) return;
+    const addMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+        const payload: ChatMessage = {
+            ...msg,
+            id: nextMessageId(),
+            timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, payload]);
+    }, []);
 
-        addMessage('user', text);
-        setInput('');
-        setIsGenerating(true);
+    const stopActiveBuild = useCallback(() => {
+        abortRef.current?.abort();
+        setBuildState((s) => ({ ...s, isBuilding: false }));
+        addMessage({ role: 'status', content: 'Build canceled. You can edit your prompt and run again.' });
+    }, [addMessage]);
 
-        try {
-            const res = await fetch('/api/products/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    creatorId,
-                    message: text,
-                    history: messages.filter(m => m.role !== 'system').map(m => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
-                }),
+    const handleStream = useCallback(
+        async (url: string, body: Record<string, unknown>, isImprove = false) => {
+            abortRef.current?.abort();
+            const controller = new AbortController();
+            abortRef.current = controller;
+
+            setBuildState((s) => ({ ...s, isBuilding: true, phase: 'init', ...(isImprove ? {} : { html: '' }) }));
+            setComposerError(null);
+
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                    signal: controller.signal,
+                });
+
+                if (!res.ok) {
+                    const errPayload = await readJsonSafe<{ error?: string }>(res);
+                    const message = getApiErrorMessage(errPayload, 'Unable to start generation.');
+                    addMessage({ role: 'assistant', content: `Error: ${message}` });
+                    setComposerError(message);
+                    setBuildState((s) => ({ ...s, isBuilding: false }));
+                    return;
+                }
+
+                const reader = res.body?.getReader();
+                if (!reader) {
+                    const message = 'No stream returned by the build endpoint.';
+                    addMessage({ role: 'assistant', content: `Error: ${message}` });
+                    setComposerError(message);
+                    setBuildState((s) => ({ ...s, isBuilding: false }));
+                    return;
+                }
+
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+
+                        try {
+                            const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+                            const eventType = String(event.type || '');
+
+                            if (eventType === 'status') {
+                                const statusMessage = typeof event.message === 'string' ? event.message : 'Working...';
+                                addMessage({ role: 'status', content: statusMessage });
+                                setBuildState((s) => ({ ...s, phase: typeof event.phase === 'string' ? event.phase : s.phase }));
+                                continue;
+                            }
+
+                            if (eventType === 'topic_suggestions') {
+                                const content = typeof event.message === 'string'
+                                    ? event.message
+                                    : 'Choose one topic to focus your product.';
+                                addMessage({
+                                    role: 'assistant',
+                                    content,
+                                    topicSuggestions: Array.isArray(event.topics)
+                                        ? (event.topics as { topic: string; videoCount: number }[])
+                                        : [],
+                                    productType: typeof event.productType === 'string' ? event.productType : undefined,
+                                });
+                                setBuildState((s) => ({ ...s, isBuilding: false }));
+                                setPendingProductType(typeof event.productType === 'string' ? event.productType : null);
+                                continue;
+                            }
+
+                            if (eventType === 'html_chunk' || eventType === 'html_complete') {
+                                setBuildState((s) => ({
+                                    ...s,
+                                    html: typeof event.html === 'string' ? event.html : s.html,
+                                }));
+                                continue;
+                            }
+
+                            if (eventType === 'complete') {
+                                const videosUsed = typeof event.videosUsed === 'number' ? event.videosUsed : null;
+                                const title = typeof event.title === 'string' ? event.title : 'Your product';
+                                setBuildState((s) => ({
+                                    ...s,
+                                    productId: typeof event.productId === 'string' ? event.productId : s.productId,
+                                    versionId: typeof event.versionId === 'string' ? event.versionId : s.versionId,
+                                    isBuilding: false,
+                                    phase: 'complete',
+                                }));
+
+                                if (isImprove) {
+                                    addMessage({ role: 'assistant', content: 'Changes applied. Continue refining with another instruction.' });
+                                } else {
+                                    addMessage({
+                                        role: 'assistant',
+                                        content: `"${title}" is ready.${videosUsed ? ` Built from ${videosUsed} top videos.` : ''} Keep iterating in the chat to sharpen the final version.`,
+                                    });
+                                    onProductCreated();
+                                }
+                                continue;
+                            }
+
+                            if (eventType === 'error') {
+                                const message = typeof event.message === 'string' ? event.message : 'Generation failed.';
+                                addMessage({ role: 'assistant', content: `Error: ${message}` });
+                                setComposerError(message);
+                                setBuildState((s) => ({ ...s, isBuilding: false }));
+                            }
+                        } catch {
+                            // Ignore malformed stream chunks.
+                        }
+                    }
+                }
+            } catch (err) {
+                if ((err as Error).name !== 'AbortError') {
+                    const message = 'Connection lost while generating. Please retry.';
+                    addMessage({ role: 'assistant', content: `Error: ${message}` });
+                    setComposerError(message);
+                    setBuildState((s) => ({ ...s, isBuilding: false }));
+                }
+            }
+        },
+        [addMessage, onProductCreated]
+    );
+
+    const handleTopicSelect = useCallback(
+        (topic: string) => {
+            addMessage({ role: 'user', content: topic });
+            handleStream('/api/products/build', {
+                creatorId,
+                message: topic,
+                productType: pendingProductType || 'pdf_guide',
+                confirmedTopic: topic,
             });
+        },
+        [creatorId, pendingProductType, addMessage, handleStream]
+    );
 
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({}));
-                addMessage('assistant', errData.error || 'Something went wrong. Please try again.');
-                setIsGenerating(false);
+    const handleSubmit = useCallback(
+        async (prompt?: string) => {
+            const text = (prompt || input).trim();
+            if (!text || buildState.isBuilding) return;
+
+            addMessage({ role: 'user', content: text });
+            setInput('');
+
+            if (buildState.productId && buildState.html) {
+                handleStream(
+                    '/api/products/improve',
+                    {
+                        productId: buildState.productId,
+                        instruction: text,
+                        currentHtml: buildState.html,
+                    },
+                    true
+                );
                 return;
             }
 
-            const data = await res.json();
-            addMessage('assistant', data.message, data.productId);
+            handleStream('/api/products/build', {
+                creatorId,
+                message: text,
+            });
+        },
+        [input, buildState, creatorId, addMessage, handleStream]
+    );
 
-            if (data.productId) {
-                onProductCreated();
-            }
-        } catch {
-            addMessage('assistant', 'Network error — please check your connection.');
-        }
-
-        setIsGenerating(false);
-        inputRef.current?.focus();
-    }, [input, isGenerating, creatorId, messages, onProductCreated]);
+    const hasProduct = buildState.html.length > 0;
+    const showWelcome = !hasProduct && !buildState.isBuilding && messages.length === 0;
+    const activeStep = phaseIndex(buildState.phase);
 
     return (
-        <div className="product-builder">
+        <div className="builder-root">
             <style>{`
-                .product-builder {
+                .builder-root {
+                    --bg-a: #091320;
+                    --bg-b: #101d2e;
+                    --bg-c: #16263b;
+                    --surface: rgba(255, 255, 255, 0.06);
+                    --surface-strong: rgba(255, 255, 255, 0.1);
+                    --line: rgba(255, 255, 255, 0.14);
+                    --text: #e2e8f0;
+                    --muted: rgba(226, 232, 240, 0.62);
+                    --accent: #22d3ee;
+                    --accent-strong: #0891b2;
+                    --highlight: #f59e0b;
+                    position: relative;
                     flex: 1;
                     display: flex;
                     flex-direction: column;
+                    min-height: 0;
+                    color: var(--text);
+                    background:
+                        radial-gradient(700px 260px at 18% -5%, rgba(34, 211, 238, 0.16), transparent 60%),
+                        radial-gradient(800px 260px at 92% -4%, rgba(245, 158, 11, 0.15), transparent 62%),
+                        linear-gradient(145deg, var(--bg-a), var(--bg-b) 52%, var(--bg-c));
                     overflow: hidden;
                 }
-                .pb-messages {
-                    flex: 1;
-                    overflow-y: auto;
-                    padding: 1rem;
+                .builder-root::before {
+                    content: '';
+                    position: absolute;
+                    inset: 0;
+                    pointer-events: none;
+                    opacity: 0.26;
+                    background-image:
+                        linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+                    background-size: 30px 30px;
+                    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 92%);
+                }
+                .builder-content {
+                    position: relative;
+                    z-index: 1;
                     display: flex;
+                    flex: 1;
+                    min-height: 0;
                     flex-direction: column;
-                    gap: 0.75rem;
                 }
-                .pb-msg {
-                    max-width: 85%;
-                    padding: 0.75rem 1rem;
-                    border-radius: 1rem;
-                    font-size: 0.85rem;
-                    line-height: 1.5;
-                    animation: msgFadeIn 0.3s ease;
-                }
-                @keyframes msgFadeIn {
-                    from { opacity: 0; transform: translateY(8px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-                .pb-msg.user {
-                    align-self: flex-end;
-                    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                    color: white;
-                    border-bottom-right-radius: 0.25rem;
-                }
-                .pb-msg.assistant {
-                    align-self: flex-start;
-                    background: rgba(255,255,255,0.06);
-                    color: rgba(255,255,255,0.85);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    border-bottom-left-radius: 0.25rem;
-                }
-                .pb-msg .product-badge {
-                    display: inline-block;
-                    margin-top: 0.5rem;
-                    padding: 0.25rem 0.75rem;
-                    background: rgba(34, 197, 94, 0.15);
-                    border: 1px solid rgba(34, 197, 94, 0.3);
-                    border-radius: 2rem;
-                    font-size: 0.7rem;
-                    color: #4ade80;
-                    font-weight: 600;
-                }
-                .pb-typing {
+                .builder-top {
                     display: flex;
-                    gap: 4px;
-                    padding: 0.75rem 1rem;
-                    align-self: flex-start;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 1rem;
+                    padding: 0.9rem 1rem;
+                    border-bottom: 1px solid var(--line);
+                    background: rgba(5, 12, 22, 0.42);
+                    backdrop-filter: blur(12px);
                 }
-                .pb-typing span {
-                    width: 6px;
-                    height: 6px;
-                    border-radius: 50%;
-                    background: rgba(255,255,255,0.3);
-                    animation: typingDot 1.4s ease-in-out infinite;
-                }
-                .pb-typing span:nth-child(2) { animation-delay: 0.2s; }
-                .pb-typing span:nth-child(3) { animation-delay: 0.4s; }
-                @keyframes typingDot {
-                    0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
-                    30% { transform: translateY(-6px); opacity: 1; }
-                }
-                .pb-suggestions {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 0.5rem;
-                    padding: 0 1rem;
-                    margin-bottom: 0.5rem;
-                }
-                .pb-suggestion {
-                    padding: 0.5rem 0.75rem;
-                    border-radius: 2rem;
-                    background: rgba(255,255,255,0.04);
-                    border: 1px solid rgba(255,255,255,0.08);
-                    color: rgba(255,255,255,0.6);
-                    font-size: 0.75rem;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    font-family: inherit;
-                }
-                .pb-suggestion:hover {
-                    background: rgba(139, 92, 246, 0.1);
-                    border-color: rgba(139, 92, 246, 0.3);
-                    color: white;
-                }
-                .pb-input-bar {
-                    display: flex;
-                    gap: 0.5rem;
-                    padding: 0.75rem 1rem;
-                    border-top: 1px solid rgba(255,255,255,0.06);
-                    background: rgba(0,0,0,0.2);
-                }
-                .pb-input {
-                    flex: 1;
-                    padding: 0.625rem 1rem;
-                    border-radius: 1.5rem;
-                    border: 1px solid rgba(255,255,255,0.1);
-                    background: rgba(255,255,255,0.05);
-                    color: white;
-                    font-size: 0.85rem;
-                    outline: none;
-                    font-family: inherit;
-                }
-                .pb-input::placeholder { color: rgba(255,255,255,0.25); }
-                .pb-input:focus { border-color: #8b5cf6; }
-                .pb-send {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 50%;
-                    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                    color: white;
-                    border: none;
-                    cursor: pointer;
+                .builder-top-left {
                     display: flex;
                     align-items: center;
+                    gap: 0.7rem;
+                }
+                .builder-pill {
+                    padding: 0.3rem 0.55rem;
+                    border-radius: 999px;
+                    font-size: 0.62rem;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    font-weight: 700;
+                    border: 1px solid rgba(34, 211, 238, 0.38);
+                    color: #67e8f9;
+                    background: rgba(34, 211, 238, 0.12);
+                }
+                .builder-title {
+                    font-size: 0.86rem;
+                    font-weight: 600;
+                    color: rgba(226, 232, 240, 0.92);
+                }
+                .builder-top-right {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.75rem;
+                }
+                .builder-phase {
+                    display: flex;
+                    gap: 0.45rem;
+                    align-items: center;
+                }
+                .builder-phase-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.4rem;
+                    color: var(--muted);
+                    font-size: 0.65rem;
+                    letter-spacing: 0.05em;
+                    text-transform: uppercase;
+                }
+                .builder-phase-dot {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    border: 1px solid rgba(148, 163, 184, 0.4);
+                    background: transparent;
+                    transition: all 0.25s ease;
+                }
+                .builder-phase-item.done .builder-phase-dot,
+                .builder-phase-item.active .builder-phase-dot {
+                    border-color: rgba(34, 211, 238, 0.8);
+                    background: linear-gradient(140deg, var(--accent), var(--highlight));
+                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+                }
+                .builder-phase-item.active {
+                    color: rgba(226, 232, 240, 0.92);
+                }
+                .builder-stop {
+                    border: 1px solid rgba(248, 113, 113, 0.45);
+                    background: rgba(248, 113, 113, 0.14);
+                    color: #fecaca;
+                    border-radius: 999px;
+                    padding: 0.3rem 0.7rem;
+                    font-size: 0.66rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+                .builder-stop:hover {
+                    background: rgba(248, 113, 113, 0.2);
+                }
+                .builder-welcome {
+                    flex: 1;
+                    min-height: 0;
+                    display: flex;
+                    flex-direction: column;
                     justify-content: center;
-                    font-size: 1rem;
-                    transition: all 0.2s;
+                    align-items: center;
+                    padding: 2rem 1.5rem 1.4rem;
+                    gap: 1.4rem;
+                }
+                .builder-welcome-card {
+                    width: min(820px, 100%);
+                    border-radius: 1.25rem;
+                    border: 1px solid var(--line);
+                    background: rgba(7, 15, 28, 0.62);
+                    box-shadow: 0 24px 40px rgba(0, 0, 0, 0.2);
+                    padding: 1.7rem;
+                }
+                .builder-welcome-headline {
+                    font-size: clamp(1.3rem, 2.4vw, 2rem);
+                    line-height: 1.1;
+                    letter-spacing: -0.02em;
+                    margin: 0;
+                    color: #f8fafc;
+                }
+                .builder-welcome-copy {
+                    margin: 0.75rem 0 0;
+                    color: var(--muted);
+                    max-width: 56ch;
+                    line-height: 1.55;
+                    font-size: 0.92rem;
+                }
+                .builder-suggestion-grid {
+                    margin-top: 1.2rem;
+                    display: grid;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: 0.65rem;
+                }
+                .builder-suggestion {
+                    border: 1px solid var(--line);
+                    border-radius: 0.95rem;
+                    background: linear-gradient(145deg, rgba(14, 27, 45, 0.84), rgba(18, 37, 58, 0.78));
+                    color: rgba(226, 232, 240, 0.9);
+                    text-align: left;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.7rem;
+                    padding: 0.75rem 0.85rem;
+                    font-size: 0.78rem;
+                    cursor: pointer;
+                    transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+                    font-family: inherit;
+                }
+                .builder-suggestion:hover {
+                    transform: translateY(-2px);
+                    border-color: rgba(34, 211, 238, 0.4);
+                    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.22), 0 12px 24px rgba(0, 0, 0, 0.2);
+                }
+                .builder-suggestion-tag {
+                    min-width: 2.4rem;
+                    text-align: center;
+                    font-weight: 700;
+                    font-size: 0.62rem;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    border-radius: 0.5rem;
+                    border: 1px solid rgba(34, 211, 238, 0.35);
+                    background: rgba(34, 211, 238, 0.11);
+                    color: #67e8f9;
+                    padding: 0.28rem 0.35rem;
                     flex-shrink: 0;
                 }
-                .pb-send:hover { transform: scale(1.05); }
-                .pb-send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+                .builder-layout {
+                    flex: 1;
+                    min-height: 0;
+                    display: flex;
+                    gap: 0;
+                }
+                .builder-chat {
+                    width: min(360px, 44%);
+                    border-right: 1px solid var(--line);
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 0;
+                    background: rgba(5, 12, 24, 0.45);
+                }
+                .builder-chat-header {
+                    padding: 0.8rem 0.95rem;
+                    border-bottom: 1px solid var(--line);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 0.6rem;
+                    background: rgba(5, 12, 24, 0.68);
+                }
+                .builder-chat-status {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    font-size: 0.68rem;
+                    font-weight: 600;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: var(--muted);
+                }
+                .builder-chat-dot {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: #94a3b8;
+                    opacity: 0.8;
+                }
+                .builder-chat-dot.live {
+                    background: linear-gradient(145deg, var(--accent), var(--highlight));
+                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+                    animation: pulseDot 1.3s ease-in-out infinite;
+                }
+                @keyframes pulseDot {
+                    0%, 100% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(0.8); opacity: 0.55; }
+                }
+                .builder-chat-messages {
+                    flex: 1;
+                    min-height: 0;
+                    overflow-y: auto;
+                    padding: 0.9rem;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.62rem;
+                }
+                .builder-msg-wrap {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.25rem;
+                }
+                .builder-msg {
+                    border-radius: 0.9rem;
+                    border: 1px solid transparent;
+                    padding: 0.56rem 0.7rem;
+                    font-size: 0.78rem;
+                    line-height: 1.55;
+                    max-width: 95%;
+                    animation: fadeUp 0.2s ease;
+                }
+                @keyframes fadeUp {
+                    from { transform: translateY(4px); opacity: 0; }
+                    to { transform: translateY(0); opacity: 1; }
+                }
+                .builder-msg.user {
+                    align-self: flex-end;
+                    background: linear-gradient(140deg, rgba(34, 211, 238, 0.9), rgba(14, 116, 144, 0.95));
+                    color: #082f49;
+                    border-bottom-right-radius: 0.25rem;
+                    border-color: rgba(34, 211, 238, 0.35);
+                }
+                .builder-msg.assistant {
+                    align-self: flex-start;
+                    background: rgba(226, 232, 240, 0.07);
+                    border-color: rgba(226, 232, 240, 0.12);
+                    color: rgba(241, 245, 249, 0.94);
+                    border-bottom-left-radius: 0.25rem;
+                }
+                .builder-msg.status {
+                    align-self: center;
+                    background: rgba(245, 158, 11, 0.12);
+                    border-color: rgba(245, 158, 11, 0.28);
+                    color: #fde68a;
+                    max-width: 100%;
+                    font-size: 0.7rem;
+                    letter-spacing: 0.02em;
+                }
+                .builder-msg-time {
+                    font-size: 0.62rem;
+                    color: rgba(226, 232, 240, 0.35);
+                    align-self: flex-start;
+                }
+                .builder-msg-wrap.user .builder-msg-time {
+                    align-self: flex-end;
+                }
+                .builder-topic-chips {
+                    margin-top: 0.35rem;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 0.35rem;
+                }
+                .builder-topic-chip {
+                    border: 1px solid rgba(34, 211, 238, 0.28);
+                    background: rgba(34, 211, 238, 0.13);
+                    color: #a5f3fc;
+                    border-radius: 999px;
+                    padding: 0.3rem 0.58rem;
+                    font-size: 0.66rem;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.3rem;
+                    cursor: pointer;
+                    font-family: inherit;
+                    transition: all 0.2s ease;
+                }
+                .builder-topic-chip:hover {
+                    background: rgba(34, 211, 238, 0.22);
+                    border-color: rgba(34, 211, 238, 0.46);
+                    transform: translateY(-1px);
+                }
+                .builder-topic-chip:disabled {
+                    opacity: 0.55;
+                    cursor: not-allowed;
+                    transform: none;
+                }
+                .builder-topic-count {
+                    border-radius: 999px;
+                    padding: 0.1rem 0.4rem;
+                    font-size: 0.58rem;
+                    background: rgba(7, 20, 35, 0.55);
+                    color: rgba(226, 232, 240, 0.7);
+                }
+                .builder-preview {
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 0;
+                    background: rgba(4, 10, 20, 0.48);
+                }
+                .builder-preview-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 0.75rem 1rem;
+                    border-bottom: 1px solid var(--line);
+                    background: rgba(4, 10, 20, 0.78);
+                }
+                .builder-preview-meta {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.6rem;
+                    font-size: 0.68rem;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: var(--muted);
+                    font-weight: 600;
+                }
+                .builder-preview-badge {
+                    border: 1px solid rgba(245, 158, 11, 0.4);
+                    background: rgba(245, 158, 11, 0.15);
+                    color: #fcd34d;
+                    border-radius: 999px;
+                    padding: 0.22rem 0.5rem;
+                    font-size: 0.58rem;
+                    letter-spacing: 0.09em;
+                    text-transform: uppercase;
+                }
+                .builder-preview-body {
+                    flex: 1;
+                    min-height: 0;
+                    padding: 0.85rem;
+                }
+                .builder-composer {
+                    display: flex;
+                    gap: 0.6rem;
+                    align-items: center;
+                    padding: 0.8rem 1rem;
+                    border-top: 1px solid var(--line);
+                    background: rgba(4, 10, 20, 0.68);
+                }
+                .builder-input {
+                    flex: 1;
+                    min-width: 0;
+                    border: 1px solid rgba(226, 232, 240, 0.16);
+                    background: rgba(226, 232, 240, 0.07);
+                    color: #f8fafc;
+                    border-radius: 999px;
+                    padding: 0.65rem 0.9rem;
+                    font-size: 0.82rem;
+                    outline: none;
+                    font-family: inherit;
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+                }
+                .builder-input:focus {
+                    border-color: rgba(34, 211, 238, 0.55);
+                    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+                }
+                .builder-input::placeholder {
+                    color: rgba(226, 232, 240, 0.45);
+                }
+                .builder-send {
+                    border: none;
+                    width: 42px;
+                    height: 42px;
+                    border-radius: 50%;
+                    font-size: 0.82rem;
+                    font-weight: 700;
+                    color: #082f49;
+                    background: linear-gradient(145deg, var(--accent), var(--highlight));
+                    cursor: pointer;
+                    transition: transform 0.2s ease, filter 0.2s ease;
+                    flex-shrink: 0;
+                }
+                .builder-send:hover {
+                    transform: translateY(-1px) scale(1.03);
+                    filter: brightness(1.04);
+                }
+                .builder-send:disabled {
+                    opacity: 0.4;
+                    cursor: not-allowed;
+                    transform: none;
+                    filter: none;
+                }
+                .builder-error {
+                    margin: 0 1rem;
+                    margin-top: 0.3rem;
+                    color: #fca5a5;
+                    font-size: 0.7rem;
+                }
+                @media (max-width: 1024px) {
+                    .builder-chat {
+                        width: min(330px, 48%);
+                    }
+                }
+                @media (max-width: 860px) {
+                    .builder-layout {
+                        flex-direction: column;
+                    }
+                    .builder-chat {
+                        width: 100%;
+                        border-right: none;
+                        border-bottom: 1px solid var(--line);
+                        min-height: 44vh;
+                    }
+                    .builder-preview {
+                        min-height: 38vh;
+                    }
+                    .builder-suggestion-grid {
+                        grid-template-columns: 1fr;
+                    }
+                    .builder-phase {
+                        display: none;
+                    }
+                }
             `}</style>
 
-            {/* Messages */}
-            <div className="pb-messages">
-                {messages.map((msg) => (
-                    <div key={msg.id} className={`pb-msg ${msg.role}`}>
-                        {msg.content}
-                        {msg.productId && (
-                            <div className="product-badge">✓ Draft saved</div>
+            <div className="builder-content">
+                <div className="builder-top">
+                    <div className="builder-top-left">
+                        <span className="builder-pill">Owny Studio</span>
+                        <span className="builder-title">Building with {displayName}&apos;s real content</span>
+                    </div>
+                    <div className="builder-top-right">
+                        <div className="builder-phase">
+                            {BUILD_PHASES.map((item, i) => {
+                                const done = i < activeStep;
+                                const active = i === activeStep && buildState.isBuilding;
+                                return (
+                                    <div
+                                        key={item.key}
+                                        className={`builder-phase-item ${done ? 'done' : ''} ${active ? 'active' : ''}`}
+                                    >
+                                        <span className="builder-phase-dot" />
+                                        <span>{item.label}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {buildState.isBuilding && (
+                            <button type="button" className="builder-stop" onClick={stopActiveBuild}>
+                                Stop
+                            </button>
                         )}
                     </div>
-                ))}
-                {isGenerating && (
-                    <div className="pb-typing">
-                        <span />
-                        <span />
-                        <span />
-                    </div>
-                )}
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Suggestion chips (show only when few messages) */}
-            {messages.length <= 2 && !isGenerating && (
-                <div className="pb-suggestions">
-                    {SUGGESTIONS.map((s) => (
-                        <button
-                            key={s.label}
-                            className="pb-suggestion"
-                            onClick={() => handleSubmit(s.label)}
-                        >
-                            {s.icon} {s.label}
-                        </button>
-                    ))}
                 </div>
-            )}
 
-            {/* Input bar */}
-            <form
-                className="pb-input-bar"
-                onSubmit={(e) => {
-                    e.preventDefault();
-                    handleSubmit();
-                }}
-            >
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Describe the product you want to create..."
-                    className="pb-input"
-                    disabled={isGenerating}
-                />
-                <button
-                    type="submit"
-                    className="pb-send"
-                    disabled={!input.trim() || isGenerating}
-                >
-                    ↑
-                </button>
-            </form>
+                {showWelcome ? (
+                    <>
+                        <div className="builder-welcome">
+                            <div className="builder-welcome-card">
+                                <h2 className="builder-welcome-headline">Design a sellable product from your creator voice</h2>
+                                <p className="builder-welcome-copy">
+                                    Pick a format and I&apos;ll transform your best TikTok ideas into a polished digital product draft.
+                                    Everything is built from your real transcript library so the result sounds like you, not generic AI copy.
+                                </p>
+                                <div className="builder-suggestion-grid">
+                                    {SUGGESTIONS.map((suggestion) => (
+                                        <button
+                                            key={suggestion.label}
+                                            type="button"
+                                            className="builder-suggestion"
+                                            onClick={() => handleSubmit(suggestion.label)}
+                                        >
+                                            <span className="builder-suggestion-tag">{suggestion.icon}</span>
+                                            <span>{suggestion.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <form
+                            className="builder-composer"
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                void handleSubmit();
+                            }}
+                        >
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                placeholder="Or describe the exact product angle you want to launch..."
+                                className="builder-input"
+                            />
+                            <button type="submit" className="builder-send" disabled={!input.trim()}>
+                                Go
+                            </button>
+                        </form>
+                        {composerError && <div className="builder-error">{composerError}</div>}
+                    </>
+                ) : (
+                    <>
+                        <div className="builder-layout">
+                            <div className="builder-chat">
+                                <div className="builder-chat-header">
+                                    <div className="builder-chat-status">
+                                        <span className={`builder-chat-dot ${buildState.isBuilding ? 'live' : ''}`} />
+                                        <span>
+                                            {buildState.isBuilding
+                                                ? 'Generating'
+                                                : buildState.productId
+                                                    ? 'Draft ready'
+                                                    : 'Assistant'}
+                                        </span>
+                                    </div>
+                                    {buildState.phase && (
+                                        <span className="builder-preview-badge">{normalizePhase(buildState.phase)}</span>
+                                    )}
+                                </div>
+
+                                <div className="builder-chat-messages">
+                                    {messages.map((msg) => {
+                                        const cleanContent = sanitizeMessageText(msg.content);
+                                        const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
+                                        return (
+                                            <div key={msg.id} className={`builder-msg-wrap ${msg.role === 'user' ? 'user' : ''}`}>
+                                                <div className={`builder-msg ${msg.role}`}>
+                                                    {lines.length === 0 ? cleanContent : lines.map((line, idx) => (
+                                                        <p key={`${msg.id}-${idx}`} style={{ margin: idx === lines.length - 1 ? 0 : '0 0 0.35rem 0' }}>
+                                                            {line}
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                                <span className="builder-msg-time">{formatMessageTime(msg.timestamp)}</span>
+                                                {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
+                                                    <div className="builder-topic-chips">
+                                                        {msg.topicSuggestions.map((topic) => (
+                                                            <button
+                                                                key={topic.topic}
+                                                                type="button"
+                                                                className="builder-topic-chip"
+                                                                onClick={() => handleTopicSelect(topic.topic)}
+                                                                disabled={buildState.isBuilding}
+                                                            >
+                                                                <span>{topic.topic}</span>
+                                                                <span className="builder-topic-count">{topic.videoCount}</span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                    <div ref={messagesEndRef} />
+                                </div>
+                            </div>
+
+                            <div className="builder-preview">
+                                <div className="builder-preview-header">
+                                    <div className="builder-preview-meta">
+                                        <span>Live Preview</span>
+                                        {buildState.productId && <span>Draft #{buildState.productId.slice(0, 8)}</span>}
+                                    </div>
+                                    <span className="builder-preview-badge">
+                                        {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
+                                    </span>
+                                </div>
+                                <div className="builder-preview-body">
+                                    <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <form
+                            className="builder-composer"
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                void handleSubmit();
+                            }}
+                        >
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                placeholder={
+                                    buildState.isBuilding
+                                        ? 'Generation in progress...'
+                                        : buildState.productId
+                                            ? 'Refine your draft: update structure, tone, or sections...'
+                                            : 'Tell the assistant what to build...'
+                                }
+                                className="builder-input"
+                                disabled={buildState.isBuilding}
+                            />
+                            <button type="submit" className="builder-send" disabled={!input.trim() || buildState.isBuilding}>
+                                Go
+                            </button>
+                        </form>
+                        {composerError && <div className="builder-error">{composerError}</div>}
+                    </>
+                )}
+            </div>
         </div>
     );
 }

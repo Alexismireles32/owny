@@ -11,7 +11,11 @@ import { HandleInput } from '@/components/landing/HandleInput';
 
 export default function OnboardPage() {
     return (
-        <Suspense fallback={null}>
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+                <p className="text-muted-foreground animate-pulse">Loading onboarding...</p>
+            </div>
+        }>
             <OnboardContent />
         </Suspense>
     );

@@ -31,13 +31,23 @@ const DEVICE_WIDTHS: Record<DeviceMode, string> = {
 export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPacket, onSave, onPublish }: VibeBuilderProps) {
     // State
     const [dsl, setDsl] = useState<ProductDSL>(() => {
-        if (initialDsl && typeof initialDsl === 'object') return initialDsl as ProductDSL;
+        if (
+            initialDsl &&
+            typeof initialDsl === 'object' &&
+            initialDsl.product &&
+            typeof initialDsl.product.title === 'string' &&
+            typeof initialDsl.product.type === 'string'
+        ) {
+            return initialDsl as ProductDSL;
+        }
         return defaultDSL();
     });
     const [generatedHtml, setGeneratedHtml] = useState<string | null>(initialHtml);
     const [saving, setSaving] = useState(false);
+    const [publishing, setPublishing] = useState(false);
     const [aiLoading, setAiLoading] = useState(false);
     const [aiProgress, setAiProgress] = useState('');
+    const [actionError, setActionError] = useState<string | null>(null);
     const [improveInput, setImproveInput] = useState('');
     const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([]);
     const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
@@ -165,42 +175,60 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
 
     // --- Save / Publish ---
     const handleSave = useCallback(async () => {
+        setActionError(null);
         setSaving(true);
-        await onSave(dsl, generatedHtml);
-        setLastSavedHtml(generatedHtml);
-        setSaving(false);
+        try {
+            await onSave(dsl, generatedHtml);
+            setLastSavedHtml(generatedHtml);
+        } catch (err) {
+            setActionError(err instanceof Error ? err.message : 'Could not save your draft.');
+        } finally {
+            setSaving(false);
+        }
     }, [dsl, generatedHtml, onSave]);
 
     const isSaved = generatedHtml === lastSavedHtml;
 
+    const handlePublish = useCallback(async () => {
+        setActionError(null);
+        setPublishing(true);
+        try {
+            await onPublish();
+        } catch (err) {
+            setActionError(err instanceof Error ? err.message : 'Could not publish this product.');
+        } finally {
+            setPublishing(false);
+        }
+    }, [onPublish]);
+
     return (
-        <div className="h-screen flex flex-col bg-slate-50 overflow-hidden">
+        <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-[#071320] via-[#0d1e31] to-[#132a3f] text-slate-100">
             {/* Top bar */}
-            <header className="h-12 border-b bg-white flex items-center justify-between px-4 flex-shrink-0">
+            <header className="h-12 border-b border-white/15 bg-black/25 backdrop-blur-md flex items-center justify-between px-4 flex-shrink-0">
                 <div className="flex items-center gap-2">
                     <a
                         href={`/products/${productId}`}
-                        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        className="text-xs text-slate-300 hover:text-white transition-colors"
                     >
                         ← Back
                     </a>
                     <Separator orientation="vertical" className="h-4" />
                     <span className="font-bold text-sm">{dsl.product.title || 'Untitled Product'}</span>
-                    <Badge variant="secondary" className="text-xs">{dsl.product.type}</Badge>
+                    <Badge variant="secondary" className="text-xs border-white/20 bg-white/10 text-slate-100">{dsl.product.type}</Badge>
                     {!isSaved && (
-                        <span className="text-xs text-amber-500 font-medium">● Unsaved</span>
+                        <span className="text-xs text-amber-300 font-medium">● Unsaved</span>
                     )}
                 </div>
                 <div className="flex items-center gap-2">
                     {/* Device Preview Toggle */}
-                    <div className="flex items-center border rounded-lg overflow-hidden">
+                    <div className="flex items-center border border-white/20 rounded-lg overflow-hidden bg-white/5">
                         {(['desktop', 'tablet', 'mobile'] as DeviceMode[]).map((mode) => (
                             <button
                                 key={mode}
                                 onClick={() => setDeviceMode(mode)}
                                 className={`px-2 py-1 text-xs transition-colors ${deviceMode === mode
-                                        ? 'bg-indigo-500 text-white'
-                                        : 'text-muted-foreground hover:bg-gray-100'
+                                    ? 'bg-cyan-500 text-[#05263a]'
+                                    : 'text-slate-300 hover:bg-white/10'
                                     }`}
                                 title={`${mode.charAt(0).toUpperCase() + mode.slice(1)} preview`}
                             >
@@ -208,20 +236,38 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                             </button>
                         ))}
                     </div>
-                    <Button variant="outline" size="sm" onClick={handleSave} disabled={saving || isSaved}>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-white/25 bg-white/10 text-slate-100 hover:bg-white/15"
+                        onClick={handleSave}
+                        disabled={saving || isSaved}
+                    >
                         {saving ? 'Saving…' : isSaved ? 'Saved ✓' : 'Save Draft'}
                     </Button>
-                    <Button size="sm" onClick={onPublish}>Publish</Button>
+                    <Button
+                        size="sm"
+                        className="bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105"
+                        onClick={handlePublish}
+                        disabled={publishing}
+                    >
+                        {publishing ? 'Publishing…' : 'Publish'}
+                    </Button>
                 </div>
             </header>
+            {actionError && (
+                <div className="px-4 py-2 text-xs text-red-200 bg-red-900/30 border-b border-red-500/25">
+                    {actionError}
+                </div>
+            )}
 
             {/* Two-panel layout */}
             <div className="flex flex-1 overflow-hidden">
                 {/* Left Panel: Controls & AI Chat */}
-                <aside className="w-80 border-r bg-white flex flex-col flex-shrink-0 overflow-hidden">
+                <aside className="w-80 border-r border-white/15 bg-black/25 backdrop-blur-sm flex flex-col flex-shrink-0 overflow-hidden">
                     {/* Product Info (editable) */}
-                    <div className="p-4 border-b space-y-3">
-                        <label className="block text-xs font-medium text-muted-foreground">Title</label>
+                    <div className="p-4 border-b border-white/15 space-y-3">
+                        <label className="block text-xs font-medium text-slate-300">Title</label>
                         <input
                             type="text"
                             value={dsl.product.title || ''}
@@ -231,13 +277,13 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                     product: { ...prev.product, title: e.target.value },
                                 }))
                             }
-                            className="w-full text-sm border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            className="w-full text-sm border border-white/20 bg-white/10 text-slate-100 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400"
                         />
-                        <label className="block text-xs font-medium text-muted-foreground">Mood</label>
+                        <label className="block text-xs font-medium text-slate-300">Mood</label>
                         <select
                             value={dsl.themeTokens?.mood || 'professional'}
                             onChange={(e) => updateTheme('mood', e.target.value)}
-                            className="w-full text-sm border rounded-md px-3 py-2"
+                            className="w-full text-sm border border-white/20 bg-white/10 text-slate-100 rounded-md px-3 py-2"
                         >
                             <option value="professional">Professional</option>
                             <option value="clean">Clean</option>
@@ -250,16 +296,16 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
 
                     {/* Generate Button — shown when no HTML exists */}
                     {!hasHtml && (
-                        <div className="p-4 border-b">
+                        <div className="p-4 border-b border-white/15">
                             <Button
-                                className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
+                                className="w-full bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105"
                                 onClick={handleAiGenerate}
                                 disabled={aiLoading}
                             >
                                 {aiLoading ? '✨ Generating...' : '✨ Generate with AI'}
                             </Button>
                             {aiProgress && (
-                                <p className="text-xs text-muted-foreground mt-2 text-center">{aiProgress}</p>
+                                <p className="text-xs text-slate-300 mt-2 text-center">{aiProgress}</p>
                             )}
                         </div>
                     )}
@@ -267,15 +313,15 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                     {/* AI Chat — shown when HTML exists */}
                     {hasHtml && (
                         <div className="flex-1 flex flex-col overflow-hidden">
-                            <div className="px-4 py-2 border-b">
+                            <div className="px-4 py-2 border-b border-white/15">
                                 <div className="flex items-center justify-between">
-                                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                    <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
                                         AI Design Chat
                                     </h3>
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="text-xs h-6"
+                                        className="text-xs h-6 text-slate-100 hover:bg-white/10"
                                         onClick={handleAiGenerate}
                                         disabled={aiLoading}
                                     >
@@ -290,15 +336,15 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                     <div
                                         key={i}
                                         className={`text-sm rounded-lg px-3 py-2 ${msg.role === 'user'
-                                            ? 'bg-indigo-50 text-indigo-900 ml-6'
-                                            : 'bg-gray-50 text-gray-700 mr-6'
+                                            ? 'bg-cyan-300 text-[#05263a] ml-6'
+                                            : 'bg-white/10 text-slate-100 mr-6 border border-white/15'
                                             }`}
                                     >
                                         {msg.message}
                                     </div>
                                 ))}
                                 {aiLoading && (
-                                    <div className="bg-gray-50 text-gray-500 text-sm rounded-lg px-3 py-2 mr-6 animate-pulse">
+                                    <div className="bg-white/10 text-slate-300 text-sm rounded-lg px-3 py-2 mr-6 animate-pulse border border-white/15">
                                         {aiProgress || 'Thinking...'}
                                     </div>
                                 )}
@@ -306,7 +352,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                             </div>
 
                             {/* Chat input */}
-                            <div className="p-3 border-t">
+                            <div className="p-3 border-t border-white/15">
                                 <div className="flex gap-2">
                                     <input
                                         type="text"
@@ -314,11 +360,12 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                         onChange={(e) => setImproveInput(e.target.value)}
                                         onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAiImprove()}
                                         placeholder="Make the hero bigger, add testimonials..."
-                                        className="flex-1 text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        className="flex-1 text-sm border border-white/20 bg-white/10 text-slate-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400"
                                         disabled={aiLoading}
                                     />
                                     <Button
                                         size="sm"
+                                        className="bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105"
                                         onClick={() => handleAiImprove()}
                                         disabled={aiLoading || !improveInput.trim()}
                                     >
@@ -331,7 +378,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                             key={prompt}
                                             onClick={() => handleAiImprove(prompt)}
                                             disabled={aiLoading}
-                                            className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-600 transition-colors disabled:opacity-40"
+                                            className="text-xs px-2 py-1 bg-white/10 hover:bg-white/15 rounded-md text-slate-200 border border-white/15 transition-colors disabled:opacity-40"
                                         >
                                             {prompt}
                                         </button>
@@ -343,10 +390,10 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                 </aside>
 
                 {/* Right Panel: Preview (iframe or empty state) */}
-                <main className="flex-1 overflow-hidden bg-gray-100 flex items-stretch justify-center p-4">
+                <main className="flex-1 overflow-hidden bg-black/20 flex items-stretch justify-center p-4">
                     {hasHtml ? (
                         <div
-                            className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col transition-all duration-300"
+                            className="bg-[#0b1523] border border-white/15 rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300"
                             style={{
                                 width: DEVICE_WIDTHS[deviceMode],
                                 maxWidth: '100%',
@@ -354,11 +401,11 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                             }}
                         >
                             {/* Preview header */}
-                            <div className="h-8 bg-gray-50 border-b flex items-center px-4 gap-2 flex-shrink-0">
+                            <div className="h-8 bg-black/25 border-b border-white/10 flex items-center px-4 gap-2 flex-shrink-0">
                                 <div className="w-3 h-3 rounded-full bg-red-400" />
                                 <div className="w-3 h-3 rounded-full bg-yellow-400" />
                                 <div className="w-3 h-3 rounded-full bg-green-400" />
-                                <span className="text-xs text-gray-400 ml-2">
+                                <span className="text-xs text-slate-400 ml-2">
                                     Live Preview — {deviceMode.charAt(0).toUpperCase() + deviceMode.slice(1)}
                                 </span>
                             </div>
@@ -371,34 +418,34 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                             />
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center text-center max-w-md">
+                        <div className="flex flex-col items-center justify-center text-center max-w-md text-slate-100">
                             {aiLoading ? (
                                 // Skeleton loading state
                                 <div className="w-full max-w-lg space-y-4 animate-pulse">
-                                    <div className="h-48 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-xl" />
-                                    <div className="h-6 bg-gray-200 rounded w-3/4 mx-auto" />
-                                    <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto" />
+                                    <div className="h-48 bg-gradient-to-r from-cyan-400/30 to-amber-400/30 rounded-xl" />
+                                    <div className="h-6 bg-white/20 rounded w-3/4 mx-auto" />
+                                    <div className="h-4 bg-white/20 rounded w-1/2 mx-auto" />
                                     <div className="space-y-2 mt-6">
-                                        <div className="h-4 bg-gray-200 rounded w-full" />
-                                        <div className="h-4 bg-gray-200 rounded w-5/6" />
-                                        <div className="h-4 bg-gray-200 rounded w-4/6" />
+                                        <div className="h-4 bg-white/15 rounded w-full" />
+                                        <div className="h-4 bg-white/15 rounded w-5/6" />
+                                        <div className="h-4 bg-white/15 rounded w-4/6" />
                                     </div>
-                                    <p className="text-sm text-muted-foreground mt-4">
+                                    <p className="text-sm text-slate-300 mt-4">
                                         {aiProgress || '✨ AI is building your product page...'}
                                     </p>
                                 </div>
                             ) : (
                                 <>
                                     <div className="text-6xl mb-4">🎨</div>
-                                    <h2 className="text-xl font-bold text-gray-800 mb-2">
+                                    <h2 className="text-xl font-bold mb-2">
                                         Create Your Product Page
                                     </h2>
-                                    <p className="text-muted-foreground mb-6">
+                                    <p className="text-slate-300 mb-6">
                                         Set your title and mood in the sidebar, then click &quot;Generate with AI&quot; to create a
                                         stunning product page with beautiful design, animations, and interactivity.
                                     </p>
                                     <Button
-                                        className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600 px-8 py-3"
+                                        className="bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105 px-8 py-3"
                                         onClick={handleAiGenerate}
                                         disabled={aiLoading}
                                     >

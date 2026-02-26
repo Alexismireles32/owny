@@ -1,9 +1,7 @@
 'use client';
 
-// StorefrontPreview — Mobile phone frame with live iframe of /c/[handle]
-// Plus a design prompt input below for storefront restyling
-
 import { useState, useCallback } from 'react';
+import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 interface StorefrontPreviewProps {
     handle: string;
@@ -12,180 +10,307 @@ interface StorefrontPreviewProps {
     creatorId: string;
 }
 
+const STYLE_PROMPTS = [
+    'Make it editorial and minimalist',
+    'Give it a bold launch-day style',
+    'Use a clean premium coaching look',
+    'Make it warm and lifestyle focused',
+];
+
 export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId }: StorefrontPreviewProps) {
     const [designPrompt, setDesignPrompt] = useState('');
     const [restyling, setRestyling] = useState(false);
     const [iframeLoaded, setIframeLoaded] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    const handleRestyle = useCallback(async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!designPrompt.trim() || restyling) return;
+    const applyRestyle = useCallback(async (prompt: string) => {
+        if (!prompt.trim() || restyling) return;
 
         setRestyling(true);
+        setError(null);
         try {
             const res = await fetch('/api/storefront/restyle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ creatorId, prompt: designPrompt }),
+                body: JSON.stringify({ creatorId, prompt }),
             });
-            if (res.ok) {
-                setDesignPrompt('');
-                onRestyle();
+
+            const payload = await readJsonSafe<{ error?: string }>(res);
+            if (!res.ok) {
+                if (isAuthStatus(res.status)) {
+                    window.location.href = '/sign-in?next=%2Fdashboard';
+                    return;
+                }
+                setError(getApiErrorMessage(payload, 'Could not apply storefront style changes.'));
+                return;
             }
-        } catch { /* silent */ }
-        setRestyling(false);
-    }, [designPrompt, restyling, creatorId, onRestyle]);
+
+            setDesignPrompt('');
+            onRestyle();
+        } catch {
+            setError('Network error while applying storefront style changes.');
+        } finally {
+            setRestyling(false);
+        }
+    }, [creatorId, onRestyle, restyling]);
+
+    const handleRestyle = useCallback(async (e: React.FormEvent) => {
+        e.preventDefault();
+        await applyRestyle(designPrompt);
+    }, [applyRestyle, designPrompt]);
 
     return (
-        <div className="storefront-preview">
+        <div className="preview-root">
             <style>{`
-                .storefront-preview {
+                .preview-root {
+                    --preview-line: rgba(255, 255, 255, 0.13);
+                    --preview-muted: rgba(226, 232, 240, 0.62);
+                    --preview-text: rgba(241, 245, 249, 0.94);
                     flex: 1;
+                    min-height: 0;
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    padding: 1.5rem 1rem;
+                    padding: 1rem 1rem 1.05rem;
+                    gap: 0.78rem;
                     overflow: hidden;
                 }
-                .phone-frame {
-                    width: 280px;
-                    max-width: 100%;
+                .preview-head {
+                    width: min(340px, 100%);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    color: var(--preview-muted);
+                    font-size: 0.7rem;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    font-weight: 700;
+                }
+                .preview-tag {
+                    border: 1px solid rgba(34, 211, 238, 0.4);
+                    background: rgba(34, 211, 238, 0.12);
+                    color: #67e8f9;
+                    border-radius: 999px;
+                    padding: 0.25rem 0.56rem;
+                    font-size: 0.6rem;
+                }
+                .preview-phone {
+                    width: min(340px, 100%);
                     flex: 1;
-                    min-height: 0;
-                    background: #000;
-                    border-radius: 2rem;
-                    border: 3px solid rgba(255,255,255,0.1);
+                    min-height: 320px;
+                    background: linear-gradient(160deg, rgba(6, 12, 22, 0.9), rgba(12, 21, 33, 0.95));
+                    border-radius: 2.1rem;
+                    border: 1px solid var(--preview-line);
                     overflow: hidden;
                     position: relative;
-                    box-shadow: 0 0 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+                    box-shadow: 0 25px 40px rgba(0, 0, 0, 0.32);
+                    padding: 0.48rem;
                 }
-                .phone-notch {
-                    width: 120px;
-                    height: 24px;
-                    background: #000;
-                    border-radius: 0 0 1rem 1rem;
+                .preview-inner {
+                    position: relative;
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 1.7rem;
+                    overflow: hidden;
+                    background: #0b1220;
+                    border: 1px solid rgba(255, 255, 255, 0.09);
+                }
+                .preview-notch {
+                    width: 122px;
+                    height: 23px;
+                    border-radius: 0 0 0.9rem 0.9rem;
+                    background: rgba(2, 8, 16, 0.92);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-top: none;
                     position: absolute;
                     top: 0;
                     left: 50%;
                     transform: translateX(-50%);
-                    z-index: 10;
+                    z-index: 3;
                 }
-                .phone-iframe {
+                .preview-iframe {
                     width: 100%;
                     height: 100%;
                     border: none;
-                    background: white;
-                    border-radius: 1.75rem;
+                    background: #fff;
                     opacity: 0;
-                    transition: opacity 0.4s ease;
+                    transition: opacity 0.35s ease;
                 }
-                .phone-iframe.loaded {
+                .preview-iframe.loaded {
                     opacity: 1;
                 }
-                .phone-loader {
+                .preview-loader {
                     position: absolute;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    color: rgba(255,255,255,0.3);
-                    font-size: 0.75rem;
-                    text-align: center;
+                    inset: 0;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 0.6rem;
+                    color: var(--preview-muted);
+                    font-size: 0.72rem;
+                    letter-spacing: 0.02em;
                 }
-                .phone-loader-spinner {
+                .preview-loader-spinner {
                     width: 24px;
                     height: 24px;
                     border-radius: 50%;
-                    border: 2px solid rgba(255,255,255,0.1);
-                    border-top-color: #8b5cf6;
-                    animation: iframeSpin 1s linear infinite;
-                    margin: 0 auto 0.5rem;
+                    border: 2px solid rgba(226, 232, 240, 0.2);
+                    border-top-color: #22d3ee;
+                    animation: spin 1s linear infinite;
                 }
-                @keyframes iframeSpin { to { transform: rotate(360deg); } }
-                .design-prompt-form {
-                    width: 280px;
-                    max-width: 100%;
-                    margin-top: 1rem;
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
+                }
+                .preview-handle {
+                    width: min(340px, 100%);
+                    color: rgba(226, 232, 240, 0.44);
+                    font-size: 0.68rem;
+                    text-align: center;
+                }
+                .preview-presets {
+                    width: min(340px, 100%);
                     display: flex;
-                    gap: 0.5rem;
+                    flex-wrap: wrap;
+                    gap: 0.4rem;
                 }
-                .design-prompt-input {
-                    flex: 1;
-                    padding: 0.5rem 0.75rem;
-                    border-radius: 0.75rem;
-                    border: 1px solid rgba(255,255,255,0.1);
-                    background: rgba(255,255,255,0.05);
-                    color: white;
-                    font-size: 0.75rem;
-                    outline: none;
+                .preview-preset {
+                    border: 1px solid rgba(226, 232, 240, 0.18);
+                    background: rgba(226, 232, 240, 0.08);
+                    color: rgba(226, 232, 240, 0.8);
+                    border-radius: 999px;
+                    font-size: 0.64rem;
+                    padding: 0.32rem 0.58rem;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
                     font-family: inherit;
                 }
-                .design-prompt-input::placeholder {
-                    color: rgba(255,255,255,0.3);
+                .preview-preset:hover {
+                    border-color: rgba(34, 211, 238, 0.38);
+                    color: #a5f3fc;
+                    background: rgba(34, 211, 238, 0.13);
                 }
-                .design-prompt-input:focus {
-                    border-color: #8b5cf6;
+                .preview-preset:disabled {
+                    opacity: 0.45;
+                    cursor: not-allowed;
                 }
-                .design-prompt-btn {
-                    padding: 0.5rem 0.75rem;
-                    border-radius: 0.75rem;
-                    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                    color: white;
-                    font-size: 0.75rem;
-                    font-weight: 600;
+                .preview-form {
+                    width: min(340px, 100%);
+                    display: flex;
+                    gap: 0.45rem;
+                }
+                .preview-input {
+                    flex: 1;
+                    min-width: 0;
+                    border-radius: 0.8rem;
+                    border: 1px solid rgba(226, 232, 240, 0.2);
+                    background: rgba(226, 232, 240, 0.08);
+                    color: var(--preview-text);
+                    padding: 0.56rem 0.72rem;
+                    font-size: 0.74rem;
+                    outline: none;
+                    font-family: inherit;
+                    transition: border-color 0.2s ease;
+                }
+                .preview-input:focus {
+                    border-color: rgba(34, 211, 238, 0.5);
+                }
+                .preview-input::placeholder {
+                    color: rgba(226, 232, 240, 0.4);
+                }
+                .preview-btn {
                     border: none;
+                    border-radius: 0.8rem;
+                    padding: 0.56rem 0.78rem;
+                    font-size: 0.7rem;
+                    font-weight: 700;
+                    letter-spacing: 0.03em;
+                    color: #082f49;
+                    background: linear-gradient(145deg, #22d3ee, #f59e0b);
                     cursor: pointer;
+                    transition: transform 0.2s ease, filter 0.2s ease;
                     font-family: inherit;
                     white-space: nowrap;
                 }
-                .design-prompt-btn:disabled {
-                    opacity: 0.4;
-                    cursor: not-allowed;
+                .preview-btn:hover {
+                    transform: translateY(-1px);
+                    filter: brightness(1.04);
                 }
-                .storefront-handle {
-                    font-size: 0.7rem;
-                    color: rgba(255,255,255,0.3);
-                    margin-top: 0.5rem;
+                .preview-btn:disabled {
+                    opacity: 0.45;
+                    cursor: not-allowed;
+                    transform: none;
+                    filter: none;
+                }
+                .preview-error {
+                    width: min(340px, 100%);
+                    font-size: 0.68rem;
+                    border-radius: 0.72rem;
+                    border: 1px solid rgba(248, 113, 113, 0.35);
+                    background: rgba(248, 113, 113, 0.12);
+                    color: #fecaca;
+                    padding: 0.45rem 0.55rem;
                 }
             `}</style>
 
-            {/* Phone Frame */}
-            <div className="phone-frame">
-                <div className="phone-notch" />
-                {!iframeLoaded && (
-                    <div className="phone-loader">
-                        <div className="phone-loader-spinner" />
-                        Loading preview
-                    </div>
-                )}
-                <iframe
-                    key={storefrontKey}
-                    src={`/c/${handle}`}
-                    className={`phone-iframe ${iframeLoaded ? 'loaded' : ''}`}
-                    title="Storefront Preview"
-                    onLoad={() => setIframeLoaded(true)}
-                />
+            <div className="preview-head">
+                <span>Storefront Studio</span>
+                <span className="preview-tag">Live</span>
             </div>
 
-            <div className="storefront-handle">owny.store/c/{handle}</div>
+            <div className="preview-phone">
+                <div className="preview-inner">
+                    <div className="preview-notch" />
+                    {!iframeLoaded && (
+                        <div className="preview-loader">
+                            <div className="preview-loader-spinner" />
+                            <span>Loading storefront</span>
+                        </div>
+                    )}
+                    <iframe
+                        key={storefrontKey}
+                        src={`/c/${handle}`}
+                        className={`preview-iframe ${iframeLoaded ? 'loaded' : ''}`}
+                        title="Storefront Preview"
+                        onLoad={() => setIframeLoaded(true)}
+                    />
+                </div>
+            </div>
 
-            {/* Design Prompt */}
-            <form className="design-prompt-form" onSubmit={handleRestyle}>
+            <div className="preview-handle">owny.store/c/{handle}</div>
+
+            <div className="preview-presets">
+                {STYLE_PROMPTS.map((preset) => (
+                    <button
+                        key={preset}
+                        type="button"
+                        className="preview-preset"
+                        disabled={restyling}
+                        onClick={() => {
+                            setDesignPrompt(preset);
+                            void applyRestyle(preset);
+                        }}
+                    >
+                        {preset}
+                    </button>
+                ))}
+            </div>
+
+            <form className="preview-form" onSubmit={handleRestyle}>
                 <input
                     type="text"
                     value={designPrompt}
                     onChange={(e) => setDesignPrompt(e.target.value)}
-                    placeholder="Change storefront design..."
-                    className="design-prompt-input"
+                    placeholder="Ask for a specific redesign direction..."
+                    className="preview-input"
                     disabled={restyling}
                 />
-                <button
-                    type="submit"
-                    className="design-prompt-btn"
-                    disabled={restyling || !designPrompt.trim()}
-                >
-                    {restyling ? '...' : 'Apply'}
+                <button type="submit" className="preview-btn" disabled={restyling || !designPrompt.trim()}>
+                    {restyling ? 'Applying' : 'Apply'}
                 </button>
             </form>
+
+            {error && <p className="preview-error">{error}</p>}
         </div>
     );
 }
