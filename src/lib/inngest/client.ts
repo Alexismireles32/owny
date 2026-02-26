@@ -19,7 +19,8 @@ function resolveInngestEnv(): string | undefined {
 }
 
 export const inngest = new Inngest({
-    id: 'owny',
+    // Use a dedicated app namespace to avoid collisions with stale/legacy registrations.
+    id: process.env.INNGEST_APP_ID?.trim() || 'owny-core',
     env: resolveInngestEnv(),
     eventKey: process.env.INNGEST_EVENT_KEY,
     signingKey: process.env.INNGEST_SIGNING_KEY,
