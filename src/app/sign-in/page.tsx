@@ -46,26 +46,37 @@ function SignInForm() {
         setStatusText(`Setting up @${handle}...`);
 
         try {
-            const res = await fetch('/api/scrape/profile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ handle }),
-            });
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                const res = await fetch('/api/scrape/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handle }),
+                });
 
-            if (!res.ok) {
-                let payload: { error?: string } | null = null;
-                try {
-                    payload = await res.json();
-                } catch {
-                    payload = null;
+                if (res.status === 401 && attempt < 3) {
+                    await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+                    continue;
                 }
 
-                setError(payload?.error || 'We could not start your content analysis. Please try again.');
-                setStatusText(null);
-                return false;
+                if (!res.ok) {
+                    let payload: { error?: string } | null = null;
+                    try {
+                        payload = await res.json();
+                    } catch {
+                        payload = null;
+                    }
+
+                    setError(payload?.error || 'We could not start your content analysis. Please try again.');
+                    setStatusText(null);
+                    return false;
+                }
+
+                return true;
             }
 
-            return true;
+            setError('We could not start your content analysis. Please try again.');
+            setStatusText(null);
+            return false;
         } catch {
             setError('We could not start your content analysis. Please try again.');
             setStatusText(null);
@@ -94,7 +105,9 @@ function SignInForm() {
         if (handleFromQuery) {
             const started = await startPipelineForHandle(handleFromQuery);
             if (!started) {
-                setLoading(false);
+                // Pipeline failed but user is signed in — don't block, send to dashboard
+                router.push('/dashboard');
+                router.refresh();
                 return;
             }
 

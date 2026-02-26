@@ -26,6 +26,7 @@ function SignUpForm() {
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [statusText, setStatusText] = useState('');
+    const [resendCooldown, setResendCooldown] = useState(0);
     const router = useRouter();
     const supabase = createClient();
 
@@ -41,6 +42,25 @@ function SignUpForm() {
             // Silent warmup; normal flow still works without cache hit.
         });
     }, [handleFromQuery]);
+
+    async function startPipelineForHandle(handle: string): Promise<boolean> {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const res = await fetch('/api/scrape/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ handle }),
+            });
+
+            if (res.status === 401 && attempt < 3) {
+                await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+                continue;
+            }
+
+            return res.ok;
+        }
+
+        return false;
+    }
 
     async function handleSignUp(e: React.FormEvent) {
         e.preventDefault();
@@ -83,26 +103,22 @@ function SignUpForm() {
             if (handleFromQuery) {
                 setStatusText('Setting up your storefront...');
                 try {
-                    const res = await fetch('/api/scrape/profile', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ handle: handleFromQuery }),
-                    });
-
-                    if (!res.ok) {
-                        let payload: { error?: string } | null = null;
-                        try {
-                            payload = await res.json();
-                        } catch {
-                            payload = null;
-                        }
-                        setError(payload?.error || 'We could not start your content analysis. Please try again.');
+                    const started = await startPipelineForHandle(handleFromQuery);
+                    if (!started) {
+                        // Pipeline failed but account was created — redirect to sign-in with context
+                        setStatusText('');
+                        setMessage(
+                            `Your account was created! The content pipeline couldn't start right now. Sign in and try connecting @${handleFromQuery} again from the dashboard.`
+                        );
                         setLoading(false);
                         return;
                     }
                 } catch {
-                    // Pipeline trigger failed — user can still access dashboard
-                    setError('We could not start your content analysis. Please try again.');
+                    // Pipeline trigger failed — account still created
+                    setStatusText('');
+                    setMessage(
+                        `Your account was created! The content pipeline couldn't start right now. Sign in and try connecting @${handleFromQuery} again from the dashboard.`
+                    );
                     setLoading(false);
                     return;
                 }
@@ -115,11 +131,35 @@ function SignUpForm() {
         // Email confirmation enabled
         setMessage(
             handleFromQuery
-                ? `Check your email to confirm your account. We will continue setting up @${handleFromQuery} after verification.`
+                ? `Check your email to confirm your account. We'll continue setting up @${handleFromQuery} after verification.`
                 : 'Check your email to confirm your account, then come back to sign in.'
         );
+        setResendCooldown(60);
         setLoading(false);
     }
+
+    // Resend verification email
+    async function handleResend() {
+        if (resendCooldown > 0 || !email) return;
+        const { error: resendError } = await supabase.auth.resend({
+            type: 'signup',
+            email,
+        });
+        if (resendError) {
+            setError(resendError.message);
+        } else {
+            setResendCooldown(60);
+        }
+    }
+
+    // Cooldown timer
+    useEffect(() => {
+        if (resendCooldown <= 0) return;
+        const timer = setInterval(() => {
+            setResendCooldown((c) => Math.max(0, c - 1));
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [resendCooldown]);
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
@@ -152,7 +192,22 @@ function SignUpForm() {
                     )}
                     {message && (
                         <div className="rounded-md bg-green-50 px-4 py-3 text-sm text-green-700">
-                            {message}
+                            <div className="flex items-center gap-2 mb-2">
+                                <span style={{ fontSize: '1.25rem' }}>📧</span>
+                                <strong>Verification email sent!</strong>
+                            </div>
+                            <p className="mb-3">{message}</p>
+                            <button
+                                type="button"
+                                onClick={handleResend}
+                                disabled={resendCooldown > 0}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-full bg-green-100 hover:bg-green-200 text-green-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {resendCooldown > 0
+                                    ? `Resend in ${resendCooldown}s`
+                                    : 'Resend verification email'
+                                }
+                            </button>
                         </div>
                     )}
 

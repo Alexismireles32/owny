@@ -89,6 +89,10 @@ function OnboardContent() {
                 }
 
                 if (!res.ok) {
+                    if (res.status === 401) {
+                        router.replace(`/sign-in?handle=${encodeURIComponent(handleFromQuery)}`);
+                        return;
+                    }
                     throw new Error(payload?.error || 'We could not start your content analysis. Please try again.');
                 }
 

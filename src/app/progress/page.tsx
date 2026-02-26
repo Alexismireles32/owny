@@ -18,7 +18,7 @@ export default async function ProgressPage() {
     // Fetch creator for this user
     const { data: creator } = await supabase
         .from('creators')
-        .select('id, handle, display_name, avatar_url, pipeline_status')
+        .select('id, handle, display_name, avatar_url, pipeline_status, pipeline_error')
         .eq('profile_id', user.id)
         .single();
 
@@ -36,6 +36,7 @@ export default async function ProgressPage() {
             displayName={creator.display_name}
             avatarUrl={creator.avatar_url}
             initialStatus={status}
+            initialError={creator.pipeline_error}
         />
     );
 }

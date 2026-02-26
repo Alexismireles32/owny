@@ -19,6 +19,12 @@ interface EnqueueResult {
     eventId: string;
 }
 
+interface InngestSdkSendResult {
+    ids?: string[];
+    status?: number;
+    error?: string;
+}
+
 const ENQUEUE_TIMEOUT_MS = 10_000;
 const HTTP_RETRY_ATTEMPTS = 2;
 const SYNC_TIMEOUT_MS = 5_000;
@@ -193,10 +199,27 @@ export async function enqueuePipelineStartEvent({
             id: eventId,
             name: 'pipeline/start',
             data: eventData,
-        });
+        }) as InngestSdkSendResult;
+
+        const status = typeof result?.status === 'number' ? result.status : 200;
+        const ids = Array.isArray(result?.ids)
+            ? result.ids.filter((id): id is string => typeof id === 'string')
+            : [];
+
+        if (status !== 200) {
+            const errorMessage =
+                typeof result?.error === 'string' && result.error.length > 0
+                    ? result.error
+                    : `Inngest SDK returned status ${status}`;
+            throw new Error(errorMessage);
+        }
+
+        if (ids.length === 0) {
+            throw new Error('Inngest SDK did not return an event id');
+        }
 
         return {
-            ids: result.ids || [],
+            ids,
             transport: 'sdk',
             runId: normalizedRunId,
             eventId,
