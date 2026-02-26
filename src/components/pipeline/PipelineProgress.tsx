@@ -617,7 +617,7 @@ export function PipelineProgress({
                         </button>
                     </div>
                     <div style={{ marginTop: '0.75rem' }}>
-                        <Link href="/" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', textDecoration: 'underline' }}>
+                        <Link href="/onboard?switch=1" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.75rem', textDecoration: 'underline' }}>
                             Or try a different username
                         </Link>
                     </div>

@@ -21,6 +21,7 @@ function OnboardContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const handleFromQuery = (searchParams.get('handle') || '').replace(/^@/, '').trim().toLowerCase();
+    const switchMode = searchParams.get('switch') === '1';
     const [checking, setChecking] = useState(true);
     const [needsOnboard, setNeedsOnboard] = useState(false);
     const [autoStarting, setAutoStarting] = useState(false);
@@ -51,7 +52,7 @@ function OnboardContent() {
                     .eq('profile_id', user.id)
                     .maybeSingle();
 
-                if (creator && !handleFromQuery) {
+                if (creator && !handleFromQuery && !switchMode) {
                     router.replace('/dashboard');
                     return;
                 }
@@ -64,7 +65,7 @@ function OnboardContent() {
             }
         }
         void check();
-    }, [handleFromQuery, router]);
+    }, [handleFromQuery, router, switchMode]);
 
     useEffect(() => {
         if (checking || !needsOnboard || !handleFromQuery || autoAttempted) return;
