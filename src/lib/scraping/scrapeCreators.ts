@@ -152,21 +152,36 @@ function toNumber(val: unknown): number {
     return 0;
 }
 
+function resolveUrl(val: unknown): string | null {
+    if (typeof val === 'string' && val.length > 0) return val;
+    // ScrapeCreators nests cover images as { url_list: string[] }
+    if (val && typeof val === 'object' && 'url_list' in val) {
+        const list = (val as Record<string, unknown>).url_list;
+        if (Array.isArray(list) && typeof list[0] === 'string') return list[0];
+    }
+    return null;
+}
+
 function pickThumbnail(v: Record<string, unknown>): string | null {
-    // Prefer non-HEIC candidates
+    const video = v.video as Record<string, unknown> | undefined;
+    // Prefer non-HEIC candidates — check both top-level and nested video object
     const candidates = [
-        v.cover,
-        v.origin_cover,
-        v.dynamic_cover,
+        v.cover, video?.cover,
+        v.origin_cover, video?.origin_cover,
+        v.dynamic_cover, video?.dynamic_cover,
         v.thumbnail_url,
-        v.ai_dynamic_cover,
+        v.ai_dynamic_cover, video?.ai_dynamic_cover,
     ];
     for (const c of candidates) {
-        if (typeof c === 'string' && c.length > 0 && !c.endsWith('.heic')) {
-            return c;
-        }
+        const url = resolveUrl(c);
+        if (url && !url.endsWith('.heic')) return url;
     }
-    return typeof candidates[0] === 'string' ? candidates[0] : null;
+    // Fallback: return first resolvable URL
+    for (const c of candidates) {
+        const url = resolveUrl(c);
+        if (url) return url;
+    }
+    return null;
 }
 
 function extractWebvttUrl(v: Record<string, unknown>): string | null {
@@ -236,17 +251,19 @@ export async function fetchTikTokVideos(
     const videoList = (data.videos || data.aweme_list || []) as Array<Record<string, unknown>>;
 
     const videos: NormalizedVideo[] = videoList.map((v) => {
-        const id = String(v.id || v.video_id || v.aweme_id || '');
+        const id = String(v.aweme_id || v.id || v.video_id || '');
+        const stats = (v.statistics || {}) as Record<string, unknown>;
+        const videoObj = (v.video || {}) as Record<string, unknown>;
         return {
             id,
             url: String(v.url || v.share_url || `https://www.tiktok.com/@${handle}/video/${id}`),
             title: typeof v.title === 'string' ? v.title : null,
             description: typeof v.desc === 'string' ? v.desc : (typeof v.description === 'string' ? v.description : null),
-            views: toNumber(v.play_count || v.views || (v.statistics as Record<string, unknown>)?.play_count),
-            likes: toNumber(v.digg_count || v.likes || (v.statistics as Record<string, unknown>)?.digg_count),
-            comments: toNumber(v.comment_count || v.comments || (v.statistics as Record<string, unknown>)?.comment_count),
-            shares: toNumber(v.share_count || v.shares || (v.statistics as Record<string, unknown>)?.share_count),
-            duration: toNumber(v.duration),
+            views: toNumber(v.play_count || stats.play_count || v.views),
+            likes: toNumber(v.digg_count || stats.digg_count || v.likes),
+            comments: toNumber(v.comment_count || stats.comment_count || v.comments),
+            shares: toNumber(v.share_count || stats.share_count || v.shares),
+            duration: toNumber(v.duration || videoObj.duration),
             thumbnailUrl: pickThumbnail(v),
             webvttUrl: extractWebvttUrl(v),
             createdAt: v.create_time
