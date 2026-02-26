@@ -1,15 +1,22 @@
 import { inngest } from '@/lib/inngest/client';
 import { log } from '@/lib/logger';
+import { randomUUID } from 'crypto';
+import type { PipelineTrigger } from '@/lib/inngest/reliability';
 
 interface PipelineStartEventInput {
     creatorId: string;
     handle: string;
+    runId?: string;
+    trigger?: PipelineTrigger;
+    replayOfRunId?: string;
 }
 
 interface EnqueueResult {
     ids: string[];
     transport: 'sdk' | 'http';
     endpoint?: string;
+    runId: string;
+    eventId: string;
 }
 
 const ENQUEUE_TIMEOUT_MS = 10_000;
@@ -119,9 +126,9 @@ async function postEventBatch(endpoint: string, body: string): Promise<string[]>
             if (!response.ok) {
                 const err =
                     typeof payload === 'object' &&
-                    payload !== null &&
-                    'error' in payload &&
-                    typeof payload.error === 'string'
+                        payload !== null &&
+                        'error' in payload &&
+                        typeof payload.error === 'string'
                         ? payload.error
                         : `HTTP ${response.status}`;
                 throw new Error(err);
@@ -166,18 +173,33 @@ async function postEventBatch(endpoint: string, body: string): Promise<string[]>
 export async function enqueuePipelineStartEvent({
     creatorId,
     handle,
+    runId,
+    trigger = 'unknown',
+    replayOfRunId,
 }: PipelineStartEventInput): Promise<EnqueueResult> {
     await ensureInngestRegistration();
+    const normalizedRunId = runId || randomUUID();
+    const eventId = `pipeline-start-${creatorId}-${normalizedRunId}`;
+    const eventData = {
+        creatorId,
+        handle,
+        runId: normalizedRunId,
+        trigger,
+        replayOfRunId: replayOfRunId || null,
+    };
 
     try {
         const result = await inngest.send({
+            id: eventId,
             name: 'pipeline/start',
-            data: { creatorId, handle },
+            data: eventData,
         });
 
         return {
             ids: result.ids || [],
             transport: 'sdk',
+            runId: normalizedRunId,
+            eventId,
         };
     } catch (sdkError) {
         const sdkMessage = getErrorMessage(sdkError);
@@ -189,9 +211,10 @@ export async function enqueuePipelineStartEvent({
 
         const body = JSON.stringify([
             {
+                id: eventId,
                 name: 'pipeline/start',
                 ts: Date.now(),
-                data: { creatorId, handle },
+                data: eventData,
             },
         ]);
 
@@ -207,7 +230,13 @@ export async function enqueuePipelineStartEvent({
                     sdkError: sdkMessage,
                 });
 
-                return { ids, transport: 'http', endpoint };
+                return {
+                    ids,
+                    transport: 'http',
+                    endpoint,
+                    runId: normalizedRunId,
+                    eventId,
+                };
             } catch (error) {
                 endpointErrors.push(`${endpoint}: ${getErrorMessage(error)}`);
             }

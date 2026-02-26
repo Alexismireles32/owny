@@ -30,6 +30,9 @@ export type PipelineStatus =
     | 'error'
     | 'insufficient_content';
 
+export type PipelineRunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'superseded';
+export type PipelineDeadLetterStatus = 'open' | 'replayed' | 'resolved' | 'ignored';
+
 export interface Creator {
     id: string;
     profile_id: string;
@@ -50,8 +53,44 @@ export interface Creator {
     is_verified: boolean;
     is_claimed: boolean;
     tiktok_url: string | null;
+    pipeline_run_id: string | null;
     visual_dna: Record<string, unknown> | null;
     voice_profile: Record<string, unknown> | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PipelineRun {
+    id: string;
+    run_id: string;
+    creator_id: string;
+    handle: string;
+    event_id: string | null;
+    status: PipelineRunStatus;
+    current_step: string | null;
+    attempt_count: number;
+    metrics: Record<string, unknown>;
+    error_message: string | null;
+    started_at: string;
+    last_heartbeat_at: string;
+    finished_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PipelineDeadLetter {
+    id: string;
+    run_id: string;
+    creator_id: string;
+    handle: string;
+    event_id: string | null;
+    failed_step: string | null;
+    error_message: string;
+    payload: Record<string, unknown>;
+    status: PipelineDeadLetterStatus;
+    replay_count: number;
+    replayed_at: string | null;
+    resolved_at: string | null;
     created_at: string;
     updated_at: string;
 }

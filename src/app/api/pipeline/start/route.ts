@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { rateLimitResponse } from '@/lib/rate-limit';
+import { randomUUID } from 'crypto';
+import { emitPipelineAlert } from '@/lib/inngest/reliability';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -61,21 +63,53 @@ export async function POST(request: Request) {
     }
 
     try {
-        const enqueue = await enqueuePipelineStartEvent({ creatorId, handle });
-
-        await supabase
+        const runId = randomUUID();
+        const { error: reserveError } = await supabase
             .from('creators')
-            .update({ pipeline_status: 'scraping', pipeline_error: null })
+            .update({
+                pipeline_status: 'scraping',
+                pipeline_error: null,
+                pipeline_run_id: runId,
+            })
             .eq('id', creatorId)
             .eq('profile_id', user.id);
+        if (reserveError) {
+            throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
+        }
+
+        const enqueue = await enqueuePipelineStartEvent({
+            creatorId,
+            handle,
+            runId,
+            trigger: 'manual_retry',
+        });
 
         return NextResponse.json({
             message: 'Pipeline started via Inngest',
             status: 'scraping',
             transport: enqueue.transport,
+            runId,
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown enqueue error';
+        await supabase
+            .from('creators')
+            .update({
+                pipeline_status: 'error',
+                pipeline_error: `Failed to start pipeline: ${message}`,
+                pipeline_run_id: null,
+            })
+            .eq('id', creatorId)
+            .eq('profile_id', user.id);
+
+        await emitPipelineAlert({
+            level: 'error',
+            code: 'pipeline_start_enqueue_failed',
+            message,
+            creatorId,
+            runId: 'manual-start',
+            details: { handle },
+        });
         return NextResponse.json(
             { error: 'Failed to start pipeline. Please try again in a moment.', details: message },
             { status: 503 }

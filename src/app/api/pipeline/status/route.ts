@@ -7,6 +7,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { log } from '@/lib/logger';
+import { randomUUID } from 'crypto';
+import { emitPipelineAlert } from '@/lib/inngest/reliability';
 
 const RUNNING_STATES = new Set(['scraping', 'transcribing', 'cleaning', 'clustering', 'extracting']);
 const STALE_PIPELINE_MS = 2 * 60 * 1000;
@@ -72,6 +74,7 @@ export async function GET(request: Request) {
                         .update({
                             pipeline_status: 'error',
                             pipeline_error: 'Pipeline stalled after retry. Please retry from your dashboard.',
+                            pipeline_run_id: null,
                         })
                         .eq('id', creator.id);
 
@@ -101,23 +104,44 @@ export async function GET(request: Request) {
                 }
 
                 try {
-                    await enqueuePipelineStartEvent({ creatorId: creator.id, handle: creator.handle });
-
-                    await db
+                    const runId = randomUUID();
+                    const { error: reserveError } = await db
                         .from('creators')
                         .update({
                             pipeline_status: 'scraping',
                             pipeline_error: `${AUTO_RETRY_MARKER}${new Date().toISOString()}`,
+                            pipeline_run_id: runId,
                         })
                         .eq('id', creator.id);
+                    if (reserveError) {
+                        throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
+                    }
+
+                    await enqueuePipelineStartEvent({
+                        creatorId: creator.id,
+                        handle: creator.handle,
+                        runId,
+                        trigger: 'auto_recovery',
+                    });
                 } catch (err) {
                     const message = err instanceof Error ? err.message : 'Unknown enqueue error';
                     log.error('Auto-recovery enqueue failed', { creatorId: creator.id, error: message });
+                    await emitPipelineAlert({
+                        level: 'error',
+                        code: 'auto_recovery_enqueue_failed',
+                        message,
+                        creatorId: creator.id,
+                        runId: 'auto-recovery',
+                        details: {
+                            handle: creator.handle,
+                        },
+                    });
                     await db
                         .from('creators')
                         .update({
                             pipeline_status: 'error',
                             pipeline_error: `Pipeline failed to start: ${message}`,
+                            pipeline_run_id: null,
                         })
                         .eq('id', creator.id);
                 }

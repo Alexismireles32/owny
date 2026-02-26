@@ -3,7 +3,7 @@
 // Per SCRAPE_CREATORS_FLOW.md
 //
 // Strategy: insert with ONLY base schema columns first (guaranteed to exist),
-// then attempt to update with pipeline columns (may not exist if migration 00009 not applied).
+// then attempt to update pipeline columns (requires migrations 00009+00011).
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
@@ -13,6 +13,8 @@ import { getPrefetchedProfile, setPrefetchedProfile } from '@/lib/scraping/prefe
 import { enqueuePipelineStartEvent } from '@/lib/inngest/enqueue';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
+import { randomUUID } from 'crypto';
+import { emitPipelineAlert, type PipelineTrigger } from '@/lib/inngest/reliability';
 
 const HANDLE_REGEX = /^[a-zA-Z0-9._]{1,24}$/;
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
@@ -28,18 +30,46 @@ function getServiceDb() {
     );
 }
 
-async function enqueuePipelineEvent(db: ReturnType<typeof getServiceDb>, creatorId: string, handle: string) {
+async function enqueuePipelineEvent(
+    db: ReturnType<typeof getServiceDb>,
+    creatorId: string,
+    handle: string,
+    trigger: PipelineTrigger = 'onboarding'
+) {
+    const runId = randomUUID();
+
     try {
-        await enqueuePipelineStartEvent({ creatorId, handle });
-        return { ok: true as const };
+        const { error: reserveError } = await db
+            .from('creators')
+            .update({
+                pipeline_status: 'scraping',
+                pipeline_error: null,
+                pipeline_run_id: runId,
+            })
+            .eq('id', creatorId);
+        if (reserveError) {
+            throw new Error(`Failed to reserve pipeline run: ${reserveError.message}`);
+        }
+
+        await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
+        return { ok: true as const, runId };
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown enqueue error';
         log.error('Pipeline enqueue failed', { creatorId, handle, error: message });
+        await emitPipelineAlert({
+            level: 'error',
+            code: 'onboarding_enqueue_failed',
+            message,
+            creatorId,
+            runId,
+            details: { handle, trigger },
+        });
         await db
             .from('creators')
             .update({
                 pipeline_status: 'error',
                 pipeline_error: `Failed to start background pipeline: ${message}`,
+                pipeline_run_id: null,
             })
             .eq('id', creatorId);
         return { ok: false as const, message };
@@ -116,12 +146,7 @@ export async function POST(request: Request) {
         const status = existingCreator.pipeline_status || 'pending';
 
         if (RESTARTABLE_STATES.has(status)) {
-            await db
-                .from('creators')
-                .update({ pipeline_status: 'scraping', pipeline_error: null })
-                .eq('id', existingCreator.id);
-
-            const enqueued = await enqueuePipelineEvent(db, existingCreator.id, handle);
+            const enqueued = await enqueuePipelineEvent(db, existingCreator.id, handle, 'onboarding');
             if (!enqueued.ok) {
                 return NextResponse.json(
                     { error: 'We could not start your pipeline. Please try again.' },
@@ -218,11 +243,11 @@ export async function POST(request: Request) {
                 video_count: profile.videoCount,
                 is_verified: profile.isVerified,
                 tiktok_url: profile.tiktokUrl,
-                pipeline_status: 'scraping',
+                pipeline_status: 'pending',
             }).eq('id', userCreator.id);
 
             // Kick off pipeline via Inngest (multi-step, retries, no timeout issues)
-            const enqueued = await enqueuePipelineEvent(db, userCreator.id, handle);
+            const enqueued = await enqueuePipelineEvent(db, userCreator.id, handle, 'onboarding');
             if (!enqueued.ok) {
                 return NextResponse.json(
                     { error: 'We could not start your pipeline. Please try again.' },
@@ -269,12 +294,7 @@ export async function POST(request: Request) {
 
                     const status = winner.pipeline_status || 'pending';
                     if (RESTARTABLE_STATES.has(status)) {
-                        await db
-                            .from('creators')
-                            .update({ pipeline_status: 'scraping', pipeline_error: null })
-                            .eq('id', winner.id);
-
-                        const enqueued = await enqueuePipelineEvent(db, winner.id, handle);
+                        const enqueued = await enqueuePipelineEvent(db, winner.id, handle, 'onboarding');
                         if (!enqueued.ok) {
                             return NextResponse.json(
                                 { error: 'We could not start your pipeline. Please try again.' },
@@ -322,7 +342,7 @@ export async function POST(request: Request) {
                 video_count: profile.videoCount,
                 is_verified: profile.isVerified,
                 tiktok_url: profile.tiktokUrl,
-                pipeline_status: 'scraping',
+                pipeline_status: 'pending',
             })
             .eq('id', creatorId);
 
@@ -335,7 +355,7 @@ export async function POST(request: Request) {
 
         // 6. Kick off pipeline via Inngest
         if (pipelineReady) {
-            const enqueued = await enqueuePipelineEvent(db, creatorId, handle);
+            const enqueued = await enqueuePipelineEvent(db, creatorId, handle, 'onboarding');
             if (!enqueued.ok) {
                 return NextResponse.json(
                     { error: 'We could not start your pipeline. Please try again.' },
