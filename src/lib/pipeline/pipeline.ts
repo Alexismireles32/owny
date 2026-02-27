@@ -1,6 +1,6 @@
 // src/lib/pipeline/pipeline.ts
-// 6-stage async pipeline per SCRAPE_CREATORS_FLOW.md
-// Stages: 0A scrape-videos → 0B fetch-transcripts → 1 clean → 2 cluster → 2.5 visual-dna → 3 extract
+// 7-stage async pipeline per SCRAPE_CREATORS_FLOW.md
+// Stages: 0A scrape-videos → 0B fetch-transcripts → 1 indexing → 2 clean → 3 cluster → 3.5 visual-dna → 4 extract
 // Runs as a background task kicked off by /api/pipeline/start
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
@@ -12,6 +12,7 @@ import {
     type NormalizedVideo,
 } from '@/lib/scraping/scrapeCreators';
 import { log } from '@/lib/logger';
+import { chunkAndStoreTranscript } from '@/lib/indexing/chunker';
 
 // Use service role for pipeline operations (bypasses RLS)
 function getServiceClient() {
@@ -167,6 +168,7 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
         log.info('Pipeline 0A complete', { totalVideos: allVideos.length });
 
         // ═══ STAGE 0B: Fetch Transcripts ═══
+        await setCreatorStatus(creatorId, 'transcribing');
         log.info('Pipeline 0B: fetching transcripts', { creatorId });
 
         // Fetch DB video IDs for transcript mapping
@@ -254,18 +256,54 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
             return; // Stop pipeline here
         }
 
-        // ═══ STAGE 1: Clean Transcripts ═══
+        // ═══ STAGE 1: Index Transcripts for Retrieval (chunking only) ═══
+        await setCreatorStatus(creatorId, 'indexing');
+        log.info('Pipeline 1: indexing transcript chunks', {
+            creatorId,
+            transcripts: dedupedRows.length,
+        });
+
+        let chunksCreated = 0;
+        let chunkFailures = 0;
+        for (const row of dedupedRows) {
+            try {
+                chunksCreated += await chunkAndStoreTranscript(
+                    supabase,
+                    row.video_id,
+                    row.transcript_text
+                );
+            } catch (error) {
+                chunkFailures += 1;
+                log.warn('Pipeline indexing failed for transcript', {
+                    creatorId,
+                    videoId: row.video_id,
+                    error: error instanceof Error ? error.message : 'Unknown chunking error',
+                });
+            }
+        }
+
+        if (chunksCreated === 0) {
+            throw new Error('No searchable transcript chunks were generated during indexing.');
+        }
+
+        log.info('Pipeline 1 complete', {
+            creatorId,
+            chunksCreated,
+            chunkFailures,
+        });
+
+        // ═══ STAGE 2: Clean Transcripts ═══
         await setCreatorStatus(creatorId, 'cleaning');
-        log.info('Pipeline 1: cleaning transcripts', { creatorId });
+        log.info('Pipeline 2: cleaning transcripts', { creatorId });
 
         // For MVP: transcripts are already usable as-is from WebVTT/description
         // In production, this would call Gemini Flash to clean/organize
         // For now, we just advance to the next stage
-        log.info('Pipeline 1 complete (pass-through for MVP)');
+        log.info('Pipeline 2 complete (pass-through for MVP)');
 
-        // ═══ STAGE 2: Cluster Content ═══
+        // ═══ STAGE 3: Cluster Content ═══
         await setCreatorStatus(creatorId, 'clustering');
-        log.info('Pipeline 2: clustering content', { creatorId });
+        log.info('Pipeline 3: clustering content', { creatorId });
 
         // MVP: Create basic clusters from video metadata
         // In production, this would use Gemini Flash for intelligent clustering
@@ -339,14 +377,14 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
                 .insert(clusterRows);
 
             if (clusterError) {
-                log.error('Pipeline 2: cluster insert error', { error: clusterError.message });
+                log.error('Pipeline 3: cluster insert error', { error: clusterError.message });
             }
         }
 
-        log.info('Pipeline 2 complete', { clusters: clusterRows.length });
+        log.info('Pipeline 3 complete', { clusters: clusterRows.length });
 
-        // ═══ STAGE 2.5: Extract Visual DNA ═══
-        log.info('Pipeline 2.5: extracting visual DNA', { creatorId });
+        // ═══ STAGE 3.5: Extract Visual DNA ═══
+        log.info('Pipeline 3.5: extracting visual DNA', { creatorId });
 
         // Extract visual DNA from top video thumbnails
         const topVideos = [...dedupedRows]
@@ -370,11 +408,11 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
             .update({ visual_dna: visualDna })
             .eq('id', creatorId);
 
-        log.info('Pipeline 2.5 complete');
+        log.info('Pipeline 3.5 complete');
 
-        // ═══ STAGE 3: Extract Content + Voice Profile ═══
+        // ═══ STAGE 4: Extract Content + Voice Profile ═══
         await setCreatorStatus(creatorId, 'extracting');
-        log.info('Pipeline 3: extracting content', { creatorId });
+        log.info('Pipeline 4: extracting content', { creatorId });
 
         // MVP: Build voice profile from transcript analysis
         // In production, this would use GPT-4.1 for deep extraction
@@ -396,7 +434,7 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
             .update({ voice_profile: voiceProfile })
             .eq('id', creatorId);
 
-        log.info('Pipeline 3 complete');
+        log.info('Pipeline 4 complete');
 
         // ═══ COMPLETION ═══
         await setCreatorStatus(creatorId, 'ready', { pipeline_error: null });

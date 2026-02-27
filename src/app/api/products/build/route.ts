@@ -382,8 +382,8 @@ export async function POST(request: Request) {
                 // Fetch FULL transcripts for selected videos
                 const { data: transcripts } = await db
                     .from('video_transcripts')
-                    .select('id, title, description, transcript_text, views, likes')
-                    .in('id', selectedVideoIds);
+                    .select('video_id, title, description, transcript_text, views, likes')
+                    .in('video_id', selectedVideoIds);
 
                 // Fetch clip cards for structured data
                 const { data: clipCards } = await db
@@ -397,7 +397,7 @@ export async function POST(request: Request) {
 
                 // Build rich content context from transcripts + clip cards
                 const contentContext = (transcripts || []).map((t, i) => {
-                    const card = clipCardMap.get(t.id) as Record<string, unknown> | null;
+                    const card = clipCardMap.get(t.video_id) as Record<string, unknown> | null;
                     return `--- VIDEO ${i + 1}: "${t.title || 'Untitled'}" (${t.views || 0} views) ---
 ${card ? `Key Topics: ${(card.topicTags as string[])?.join(', ') || 'N/A'}` : ''}
 ${card ? `Key Steps: ${JSON.stringify((card as Record<string, unknown>).keySteps || [])}` : ''}
