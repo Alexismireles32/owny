@@ -1,7 +1,7 @@
 'use client';
 
-// Dashboard error boundary — creator-facing errors in the studio
 import { useEffect } from 'react';
+import { Button } from '@/components/ui/button';
 
 export default function DashboardError({
     error,
@@ -15,61 +15,24 @@ export default function DashboardError({
     }, [error]);
 
     return (
-        <div
-            style={{
-                minHeight: '100vh',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: '#060d18',
-                fontFamily: "'Inter', system-ui, sans-serif",
-                padding: '2rem',
-            }}
-        >
-            <div style={{ textAlign: 'center', maxWidth: '420px' }}>
-                <p style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🛠️</p>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#e2e8f0', marginBottom: '0.5rem' }}>
-                    Studio Error
-                </h2>
-                <p style={{ fontSize: '0.875rem', color: '#94a3b8', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-                    Something went wrong in your studio. Your data is safe — just try again.
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+            <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center">
+                <p className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-500">Dashboard error</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Something went wrong</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                    Your data is safe. Try again and continue where you left off.
                 </p>
                 {error.digest && (
-                    <p style={{ fontSize: '0.75rem', color: '#475569', marginBottom: '1rem' }}>
-                        Ref: {error.digest}
-                    </p>
+                    <p className="mt-2 text-xs text-slate-400">Ref: {error.digest}</p>
                 )}
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
-                    <button
-                        onClick={reset}
-                        style={{
-                            padding: '0.6rem 1.5rem',
-                            borderRadius: '0.5rem',
-                            border: 'none',
-                            background: '#22d3ee',
-                            color: '#0f172a',
-                            fontWeight: 600,
-                            fontSize: '0.875rem',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        Try Again
-                    </button>
-                    <a
-                        href="/dashboard"
-                        style={{
-                            padding: '0.6rem 1.5rem',
-                            borderRadius: '0.5rem',
-                            border: '1px solid rgba(226,232,240,0.2)',
-                            background: 'rgba(226,232,240,0.08)',
-                            color: '#e2e8f0',
-                            fontWeight: 600,
-                            fontSize: '0.875rem',
-                            textDecoration: 'none',
-                        }}
-                    >
-                        Reload Studio
-                    </a>
+
+                <div className="mt-5 flex justify-center gap-2">
+                    <Button type="button" onClick={reset}>
+                        Try again
+                    </Button>
+                    <Button asChild type="button" variant="outline">
+                        <a href="/dashboard">Reload</a>
+                    </Button>
                 </div>
             </div>
         </div>
