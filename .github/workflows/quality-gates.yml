@@ -1,0 +1,75 @@
+name: Quality Gates
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+concurrency:
+  group: quality-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: anon-test-key
+      SUPABASE_SERVICE_ROLE_KEY: service-role-test-key
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_placeholder
+      STRIPE_CONNECT_WEBHOOK_SECRET: whsec_placeholder
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_placeholder
+      CRON_SECRET: local-cron-secret
+      NODE_ENV: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build design tokens
+        run: npm run tokens:build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Storybook interaction + accessibility tests
+        run: npm run test-storybook
+
+      - name: Playwright visual snapshots
+        run: npm run test:visual
+
+      - name: Lighthouse quality gates
+        run: npm run test:lighthouse
+
+      - name: Chromatic token not configured
+        if: ${{ secrets.CHROMATIC_PROJECT_TOKEN == '' }}
+        run: |
+          echo "::notice title=Chromatic disabled::Set CHROMATIC_PROJECT_TOKEN in repository secrets to enable cloud visual review."
+
+      - name: Chromatic cloud run
+        if: ${{ secrets.CHROMATIC_PROJECT_TOKEN != '' }}
+        env:
+          CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+        run: npx chromatic --project-token "$CHROMATIC_PROJECT_TOKEN" --exit-zero-on-changes

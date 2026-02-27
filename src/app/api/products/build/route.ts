@@ -7,6 +7,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import { hybridSearch } from '@/lib/indexing/search';
 import { rerankCandidates } from '@/lib/ai/reranker';
 import { postProcessHTML } from '@/lib/ai/router';
+import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
+import {
+    buildDesignCanonContext,
+    chooseCreativeDirection,
+    getEvergreenDesignCanon,
+} from '@/lib/ai/design-canon';
+import { evaluateProductQuality } from '@/lib/ai/quality-gates';
+import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 
@@ -222,6 +230,240 @@ tailwind.config = {
 }
 </script>`;
 
+interface TranscriptSelectionRow {
+    video_id: string;
+    title: string | null;
+    description: string | null;
+    transcript_text: string | null;
+    views: number | null;
+    likes: number | null;
+}
+
+interface ClipCardRow {
+    video_id: string;
+    card_json: Record<string, unknown> | null;
+}
+
+interface VideoMetadataRow {
+    id: string;
+    title: string | null;
+    description: string | null;
+    views: number | null;
+    likes: number | null;
+}
+
+interface TranscriptChunkRow {
+    video_id: string;
+    chunk_text: string;
+    chunk_index: number;
+}
+
+function normalizeWhitespace(value: string | null | undefined, maxLen = 160): string | null {
+    if (!value) return null;
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return null;
+    return cleaned.slice(0, maxLen);
+}
+
+function pickVideoTitle(
+    index: number,
+    transcript: TranscriptSelectionRow | undefined,
+    videoMeta: VideoMetadataRow | undefined
+): string {
+    const candidate = normalizeWhitespace(transcript?.title, 160)
+        || normalizeWhitespace(videoMeta?.title, 160)
+        || normalizeWhitespace(transcript?.description, 160)
+        || normalizeWhitespace(videoMeta?.description, 160);
+
+    if (!candidate) return `Video ${index + 1}`;
+    if (/^(untitled|null|n\/a)$/i.test(candidate)) return `Video ${index + 1}`;
+    return candidate;
+}
+
+function tokenizeQuery(query: string): string[] {
+    return query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3);
+}
+
+function scoreTextMatch(text: string, tokens: string[]): number {
+    if (!text || tokens.length === 0) return 0;
+    const lower = text.toLowerCase();
+    let score = 0;
+    for (const token of tokens) {
+        if (lower.includes(token)) score += 1;
+    }
+    return score;
+}
+
+function buildTranscriptContext(
+    transcript: string | null | undefined,
+    chunks: TranscriptChunkRow[],
+    queryTokens: string[],
+    maxChars = 5000
+): string {
+    const transcriptText = (transcript || '').trim();
+    if (!transcriptText && chunks.length === 0) return '';
+
+    if (chunks.length === 0) {
+        return transcriptText.slice(0, maxChars);
+    }
+
+    const rankedChunks = chunks
+        .map((chunk) => ({
+            text: chunk.chunk_text,
+            score: scoreTextMatch(chunk.chunk_text, queryTokens),
+            idx: chunk.chunk_index,
+        }))
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return a.idx - b.idx;
+        })
+        .slice(0, 6)
+        .sort((a, b) => a.idx - b.idx);
+
+    const chunkJoined = rankedChunks.map((chunk) => chunk.text).join('\n');
+    const candidate = chunkJoined.length >= 250 ? chunkJoined : transcriptText;
+    return candidate.slice(0, maxChars);
+}
+
+function countHtmlWords(html: string): number {
+    const text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!text) return 0;
+    return text.split(' ').filter(Boolean).length;
+}
+
+function minimumWordTarget(productType: ProductType): number {
+    switch (productType) {
+        case 'pdf_guide':
+            return 1400;
+        case 'mini_course':
+            return 1200;
+        case 'challenge_7day':
+            return 1000;
+        case 'checklist_toolkit':
+            return 900;
+        default:
+            return 1000;
+    }
+}
+
+function containsPlaceholderCopy(html: string): boolean {
+    const lower = html.toLowerCase();
+    return (
+        lower.includes('lorem ipsum')
+        || lower.includes('coming soon')
+        || lower.includes('placeholder')
+        || lower.includes('[insert')
+    );
+}
+
+function needsContentStrengthening(html: string, productType: ProductType): boolean {
+    if (!html.toLowerCase().includes('<!doctype html>')) return true;
+    if (containsPlaceholderCopy(html)) return true;
+    return countHtmlWords(html) < minimumWordTarget(productType);
+}
+
+function extractAnthropicText(response: Anthropic.Messages.Message): string {
+    return response.content
+        .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('');
+}
+
+async function strengthenHtmlDraft(input: {
+    anthropic: Anthropic;
+    systemPrompt: string;
+    productType: ProductType;
+    draftHtml: string;
+    topicQuery: string;
+    voiceContext: string;
+    contentContext: string;
+}): Promise<string> {
+    const response = await input.anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 8192,
+        system: input.systemPrompt,
+        messages: [{
+            role: 'user',
+            content: `The draft ${input.productType} below is too shallow for a paid product.
+Expand it with substantial, specific teaching content grounded in the provided transcript context.
+Keep the existing structure and design style, but deepen lessons/chapters/actions.
+Output ONLY full HTML.
+
+TOPIC:
+${input.topicQuery}
+
+VOICE PROFILE:
+${input.voiceContext || '(none)'}
+
+TRANSCRIPT CONTEXT:
+${input.contentContext}
+
+CURRENT DRAFT HTML:
+${input.draftHtml}`,
+        }],
+    });
+
+    return extractAnthropicText(response);
+}
+
+async function loadCreatorCatalogHtml(
+    db: ReturnType<typeof getServiceDb>,
+    creatorId: string,
+    excludeProductId: string
+): Promise<string[]> {
+    try {
+        const { data: products, error: productsError } = await db
+            .from('products')
+            .select('active_version_id')
+            .eq('creator_id', creatorId)
+            .neq('id', excludeProductId)
+            .not('active_version_id', 'is', null)
+            .limit(40);
+
+        if (productsError || !products || products.length === 0) {
+            return [];
+        }
+
+        const versionIds = products
+            .map((row) => row.active_version_id)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0)
+            .slice(0, 40);
+
+        if (versionIds.length === 0) return [];
+
+        const { data: versions, error: versionsError } = await db
+            .from('product_versions')
+            .select('generated_html')
+            .in('id', versionIds)
+            .limit(40);
+
+        if (versionsError || !versions) {
+            return [];
+        }
+
+        return versions
+            .map((row) => row.generated_html)
+            .filter((html): html is string => typeof html === 'string' && html.trim().length > 0);
+    } catch (error) {
+        log.warn('Failed to load creator catalog HTML for distinctiveness gate', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            creatorId,
+        });
+        return [];
+    }
+}
+
 export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -379,39 +621,116 @@ export async function POST(request: Request) {
                     phase: 'extracting',
                 });
 
-                // Fetch FULL transcripts for selected videos
-                const { data: transcripts } = await db
-                    .from('video_transcripts')
-                    .select('video_id, title, description, transcript_text, views, likes')
-                    .in('video_id', selectedVideoIds);
+                const queryTokens = tokenizeQuery(topicQuery);
 
-                // Fetch clip cards for structured data
-                const { data: clipCards } = await db
-                    .from('clip_cards')
-                    .select('video_id, card_json')
-                    .in('video_id', selectedVideoIds);
+                const [
+                    { data: transcripts },
+                    { data: clipCards },
+                    { data: videosMeta },
+                    { data: transcriptChunks },
+                ] = await Promise.all([
+                    db
+                        .from('video_transcripts')
+                        .select('video_id, title, description, transcript_text, views, likes')
+                        .in('video_id', selectedVideoIds),
+                    db
+                        .from('clip_cards')
+                        .select('video_id, card_json')
+                        .in('video_id', selectedVideoIds),
+                    db
+                        .from('videos')
+                        .select('id, title, description, views, likes')
+                        .in('id', selectedVideoIds),
+                    db
+                        .from('transcript_chunks')
+                        .select('video_id, chunk_text, chunk_index')
+                        .in('video_id', selectedVideoIds),
+                ]);
 
-                const clipCardMap = new Map(
-                    (clipCards || []).map((c) => [c.video_id, c.card_json])
+                const transcriptMap = new Map(
+                    ((transcripts || []) as TranscriptSelectionRow[]).map((row) => [row.video_id, row])
                 );
+                const videoMap = new Map(
+                    ((videosMeta || []) as VideoMetadataRow[]).map((row) => [row.id, row])
+                );
+                const clipCardMap = new Map(
+                    ((clipCards || []) as ClipCardRow[]).map((row) => [row.video_id, row.card_json])
+                );
+                const chunksByVideo = new Map<string, TranscriptChunkRow[]>();
+                for (const chunk of (transcriptChunks || []) as TranscriptChunkRow[]) {
+                    const existing = chunksByVideo.get(chunk.video_id) || [];
+                    existing.push(chunk);
+                    chunksByVideo.set(chunk.video_id, existing);
+                }
 
-                // Build rich content context from transcripts + clip cards
-                const contentContext = (transcripts || []).map((t, i) => {
-                    const card = clipCardMap.get(t.video_id) as Record<string, unknown> | null;
-                    return `--- VIDEO ${i + 1}: "${t.title || 'Untitled'}" (${t.views || 0} views) ---
-${card ? `Key Topics: ${(card.topicTags as string[])?.join(', ') || 'N/A'}` : ''}
-${card ? `Key Steps: ${JSON.stringify((card as Record<string, unknown>).keySteps || [])}` : ''}
-TRANSCRIPT:
-${(t.transcript_text || t.description || '').slice(0, 2000)}
----`;
-                }).join('\n\n');
+                const selectedContexts = selectedVideoIds
+                    .map((videoId, idx) => {
+                        const transcript = transcriptMap.get(videoId);
+                        const videoMeta = videoMap.get(videoId);
+                        const card = (clipCardMap.get(videoId) || null) as Record<string, unknown> | null;
+                        const title = pickVideoTitle(idx, transcript, videoMeta);
+                        const views = transcript?.views || videoMeta?.views || 0;
+                        const topicTags = Array.isArray(card?.topicTags)
+                            ? (card?.topicTags as string[]).slice(0, 8)
+                            : (Array.isArray(card?.tags) ? (card?.tags as string[]).slice(0, 8) : []);
+                        const keySteps = Array.isArray(card?.keySteps)
+                            ? (card?.keySteps as string[]).slice(0, 8)
+                            : (Array.isArray(card?.keyBullets) ? (card?.keyBullets as string[]).slice(0, 8) : []);
+                        const transcriptContext = buildTranscriptContext(
+                            transcript?.transcript_text,
+                            chunksByVideo.get(videoId) || [],
+                            queryTokens,
+                            6000
+                        );
 
-                // Send source video info to UI for transparency
+                        if (!transcriptContext) return null;
+
+                        return {
+                            videoId,
+                            title,
+                            views,
+                            topicTags,
+                            keySteps,
+                            transcriptContext,
+                        };
+                    })
+                    .filter((row): row is {
+                        videoId: string;
+                        title: string;
+                        views: number;
+                        topicTags: string[];
+                        keySteps: string[];
+                        transcriptContext: string;
+                    } => Boolean(row));
+
+                if (selectedContexts.length === 0) {
+                    send({
+                        type: 'error',
+                        message: '📭 We found videos but could not retrieve enough transcript content. Please retry import to refresh transcripts.',
+                    });
+                    controller.close();
+                    return;
+                }
+
+                const sourceEvidenceWordCount = selectedContexts.reduce((sum, row) => {
+                    const words = row.transcriptContext.split(/\s+/).filter(Boolean).length;
+                    return sum + words;
+                }, 0);
+                const groundedVideoIds = selectedContexts.map((row) => row.videoId);
+
+                const contentContext = selectedContexts.map((row, i) => `--- VIDEO ${i + 1} [ID: ${row.videoId}] ---
+TITLE: "${row.title}" (${row.views} views)
+${row.topicTags.length > 0 ? `KEY TOPICS: ${row.topicTags.join(', ')}` : 'KEY TOPICS: N/A'}
+${row.keySteps.length > 0 ? `KEY STEPS: ${JSON.stringify(row.keySteps)}` : 'KEY STEPS: []'}
+TRANSCRIPT EVIDENCE:
+${row.transcriptContext}
+---`).join('\n\n');
+
                 send({
                     type: 'source_videos',
-                    videos: (transcripts || []).map((t) => ({
-                        title: t.title || 'Untitled',
-                        views: t.views || 0,
+                    videos: selectedContexts.map((row) => ({
+                        title: row.title,
+                        views: row.views || 0,
                     })),
                 });
 
@@ -455,33 +774,35 @@ ${(t.transcript_text || t.description || '').slice(0, 2000)}
                     return;
                 }
 
-                // Build voice and brand context
+                const catalogHtml = await loadCreatorCatalogHtml(db, creator.id, product.id);
+
+                send({
+                    type: 'status',
+                    message: '🧬 Applying creator DNA and evergreen design canon...',
+                    phase: 'planning',
+                });
+
                 const voiceProfile = creator.voice_profile as Record<string, unknown> | null;
                 const brandTokens = creator.brand_tokens as Record<string, unknown> | null;
+                const creatorDna = buildCreatorDNA({
+                    handle: creator.handle,
+                    displayName: creator.display_name,
+                    bio: creator.bio,
+                    voiceProfile,
+                    brandTokens,
+                });
+                const creatorDnaContext = buildCreatorDNAContext(creatorDna);
 
-                let voiceContext = '';
-                if (voiceProfile) {
-                    voiceContext = `\nCREATOR VOICE PROFILE:\n`;
-                    if (voiceProfile.tone) voiceContext += `- Tone: ${voiceProfile.tone}\n`;
-                    if (voiceProfile.vocabulary) voiceContext += `- Vocabulary style: ${voiceProfile.vocabulary}\n`;
-                    if (voiceProfile.catchphrases && Array.isArray(voiceProfile.catchphrases)) {
-                        voiceContext += `- Catchphrases they use: ${(voiceProfile.catchphrases as string[]).join(', ')}\n`;
-                    }
-                    if (voiceProfile.personality) voiceContext += `- Personality: ${voiceProfile.personality}\n`;
-                    voiceContext += `IMPORTANT: Write the product in this exact voice and tone. Use their catchphrases naturally.\n`;
-                }
-
-                let brandContext = '';
-                if (brandTokens) {
-                    brandContext = `\nCREATOR BRAND STYLING (use these instead of default colors):\n`;
-                    if (brandTokens.primaryColor) brandContext += `- Primary color: ${brandTokens.primaryColor} (use for headings, accents, buttons)\n`;
-                    if (brandTokens.secondaryColor) brandContext += `- Secondary color: ${brandTokens.secondaryColor} (use for hover states, gradients)\n`;
-                    if (brandTokens.backgroundColor) brandContext += `- Background: ${brandTokens.backgroundColor}\n`;
-                    if (brandTokens.textColor) brandContext += `- Text color: ${brandTokens.textColor}\n`;
-                    if (brandTokens.fontFamily) brandContext += `- Font: ${brandTokens.fontFamily} (add Google Fonts link if needed)\n`;
-                    if (brandTokens.mood) brandContext += `- Mood: ${brandTokens.mood} (match the energy of the design)\n`;
-                    brandContext += `IMPORTANT: Apply these brand colors throughout the product instead of default indigo/purple.\n`;
-                }
+                const designCanon = getEvergreenDesignCanon();
+                const creativeDirection = chooseCreativeDirection({
+                    productType,
+                    creatorId: creator.id,
+                    topicQuery,
+                    creatorMood: creatorDna.visual.mood,
+                    priorProductCount: catalogHtml.length,
+                });
+                const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
+                const voiceContext = creatorDnaContext;
 
                 const systemPrompt = PRODUCT_SYSTEM_PROMPTS[productType] || PRODUCT_SYSTEM_PROMPTS.pdf_guide;
 
@@ -490,20 +811,26 @@ ${(t.transcript_text || t.description || '').slice(0, 2000)}
 PRODUCT TYPE: ${productType}
 PRODUCT TITLE: ${productTitle}
 CREATOR: ${creator.display_name} (@${creator.handle})
-${creator.bio ? `CREATOR BIO: ${creator.bio}` : ''}
-${voiceContext}
-${brandContext}
 USER REQUEST: ${message}
+TOPIC FOCUS: ${topicQuery}
+DESIGN CANON VERSION: ${designCanon.version}
+CREATIVE DIRECTION: ${creativeDirection.name} (${creativeDirection.id})
 
-VIDEOS USED (${transcripts?.length || 0} videos with full transcripts):
+${creatorDnaContext}
+
+${designCanonContext}
+
+VIDEOS USED (${selectedContexts.length} videos with transcript evidence):
 ${contentContext}
 
 IMPORTANT:
+- This is an evergreen premium product. Do not chase short-term trends or date-specific aesthetics.
 - This is the REAL product that buyers receive. Fill it with REAL, SUBSTANTIVE content from the transcripts above.
 - Mix the creator's own words and advice (from transcripts) with smooth connecting text.
 - Every chapter/lesson/day/category must contain real, actionable content — not placeholder text.
-- Write in the creator's voice and style${voiceProfile ? ' as described in the VOICE PROFILE above' : ''}.
-- ${brandTokens ? 'Use the BRAND STYLING colors described above instead of generic colors.' : ''}
+- Add source attribution comments in HTML for major sections (example: <!-- sources: video-id-1,video-id-2 -->).
+- Write in the creator's voice and style exactly as described in the CREATOR DNA PROFILE.
+- Apply creator visual tokens and the selected creative direction. Avoid generic template patterns.
 - The product should be worth paying for — thorough, specific, and valuable.
 - Include the Tailwind config script right after the Tailwind CDN:
 ${TAILWIND_CONFIG}
@@ -564,12 +891,107 @@ Generate the complete HTML document now.`;
                     send({ type: 'html_chunk', html: fullHtml });
                 }
 
-                // Post-process
+                if (needsContentStrengthening(fullHtml, productType) && process.env.ANTHROPIC_API_KEY) {
+                    send({
+                        type: 'status',
+                        message: '🧠 Strengthening depth and source grounding...',
+                        phase: 'building',
+                    });
+                    try {
+                        const strengthened = await strengthenHtmlDraft({
+                            anthropic,
+                            systemPrompt,
+                            productType,
+                            draftHtml: fullHtml,
+                            topicQuery,
+                            voiceContext,
+                            contentContext,
+                        });
+                        if (strengthened.trim()) {
+                            fullHtml = strengthened;
+                            send({ type: 'html_chunk', html: fullHtml });
+                        }
+                    } catch (strengthenError) {
+                        log.warn('HTML strengthening pass failed', {
+                            error: strengthenError instanceof Error ? strengthenError.message : 'Unknown strengthen error',
+                        });
+                    }
+                }
+
                 fullHtml = postProcessHTML(fullHtml);
+
+                let qualityEvaluation = evaluateProductQuality({
+                    html: fullHtml,
+                    productType,
+                    sourceVideoIds: groundedVideoIds,
+                    catalogHtml,
+                    brandTokens,
+                    creatorHandle: creator.handle,
+                    qualityWeights: designCanon.qualityWeights,
+                });
+                let criticIterations = 0;
+                let criticModels: string[] = [];
+
+                if (!qualityEvaluation.overallPassed) {
+                    send({
+                        type: 'status',
+                        message: '🧪 Running evergreen quality critic and revision loop...',
+                        phase: 'building',
+                    });
+
+                    try {
+                        const criticResult = await runEvergreenCriticLoop({
+                            html: fullHtml,
+                            productType,
+                            sourceVideoIds: groundedVideoIds,
+                            catalogHtml,
+                            brandTokens,
+                            creatorHandle: creator.handle,
+                            creatorDisplayName: creator.display_name || creator.handle,
+                            topicQuery,
+                            originalRequest: message,
+                            creatorDnaContext,
+                            designCanonContext,
+                            directionId: creativeDirection.id,
+                            contentContext,
+                            maxIterations: 2,
+                            qualityWeights: designCanon.qualityWeights,
+                        });
+
+                        fullHtml = criticResult.html;
+                        qualityEvaluation = criticResult.evaluation;
+                        criticIterations = criticResult.iterationsRun;
+                        criticModels = criticResult.modelTrail;
+                        send({ type: 'html_chunk', html: fullHtml });
+                    } catch (criticError) {
+                        log.warn('Evergreen critic loop failed; keeping best available HTML', {
+                            error: criticError instanceof Error ? criticError.message : 'Unknown critic error',
+                            productId: product.id,
+                        });
+                    }
+                }
+
+                send({
+                    type: 'status',
+                    message: `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'})`,
+                    phase: 'building',
+                });
                 send({ type: 'html_complete', html: fullHtml });
 
                 // Save version
                 send({ type: 'status', message: '💾 Saving your product...', phase: 'saving' });
+
+                const gateScores = Object.fromEntries(
+                    Object.entries(qualityEvaluation.gates).map(([key, gate]) => [
+                        key,
+                        {
+                            score: gate.score,
+                            threshold: gate.threshold,
+                            passed: gate.passed,
+                            notes: gate.notes,
+                        },
+                    ])
+                );
 
                 const { data: version } = await db
                     .from('product_versions')
@@ -581,13 +1003,26 @@ Generate the complete HTML document now.`;
                             productType,
                             title: productTitle,
                             creatorHandle: creator.handle,
-                            videosUsed: selectedVideoIds.length,
+                            videosUsed: groundedVideoIds.length,
                             rerankerConfidence: reranked.confidence,
                             coverageGaps: reranked.coverageGaps,
+                            sourceEvidenceWordCount,
+                            generatedWordCount: countHtmlWords(fullHtml),
+                            designCanonVersion: designCanon.version,
+                            creativeDirectionId: creativeDirection.id,
+                            creativeDirectionName: creativeDirection.name,
+                            qualityOverallScore: qualityEvaluation.overallScore,
+                            qualityOverallPassed: qualityEvaluation.overallPassed,
+                            qualityFailingGates: qualityEvaluation.failingGates,
+                            qualityGateScores: gateScores,
+                            maxCatalogSimilarity: qualityEvaluation.maxCatalogSimilarity,
+                            catalogCompared: catalogHtml.length,
+                            criticIterations,
+                            criticModels,
                         },
                         dsl_json: {},
                         generated_html: fullHtml,
-                        source_video_ids: selectedVideoIds,
+                        source_video_ids: groundedVideoIds,
                     })
                     .select('id')
                     .single();
@@ -605,15 +1040,19 @@ Generate the complete HTML document now.`;
                     versionId: version?.id,
                     title: productTitle,
                     productType,
-                    videosUsed: selectedVideoIds.length,
+                    videosUsed: groundedVideoIds.length,
+                    qualityScore: qualityEvaluation.overallScore,
                 });
 
                 log.info('Product built via streaming', {
                     productId: product.id,
                     title: productTitle,
                     htmlLength: fullHtml.length,
-                    videosUsed: selectedVideoIds.length,
+                    videosUsed: groundedVideoIds.length,
                     confidence: reranked.confidence,
+                    qualityScore: qualityEvaluation.overallScore,
+                    qualityPassed: qualityEvaluation.overallPassed,
+                    criticIterations,
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'Unknown error';

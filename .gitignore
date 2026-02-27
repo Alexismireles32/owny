@@ -43,3 +43,9 @@ supabase/.temp/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# quality/qa generated artifacts
+/storybook-static
+/test-results
+/playwright-report
+/.lighthouseci

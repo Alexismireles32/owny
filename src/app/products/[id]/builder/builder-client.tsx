@@ -20,14 +20,14 @@ interface Props {
 export function BuilderPageClient({ productId, initialDsl, initialHtml, buildPacket }: Props) {
     const router = useRouter();
 
-    async function handleSave(dsl: ProductDSL, html: string | null) {
+    async function handleSave(dsl: ProductDSL, html: string | null, nextBuildPacket: Record<string, unknown>) {
         const res = await fetch(`/api/products/${productId}/versions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 dslJson: dsl,
                 generatedHtml: html,
-                buildPacket: buildPacket || {},
+                buildPacket: nextBuildPacket || buildPacket || {},
             }),
         });
 
