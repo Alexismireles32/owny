@@ -25,7 +25,6 @@ jobs:
       STRIPE_CONNECT_WEBHOOK_SECRET: whsec_placeholder
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_placeholder
       CRON_SECRET: local-cron-secret
-      NODE_ENV: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
