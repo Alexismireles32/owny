@@ -268,6 +268,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
                             if (eventType === 'complete') {
                                 const videosUsed = typeof event.videosUsed === 'number' ? event.videosUsed : null;
+                                const qualityScore = typeof event.qualityScore === 'number' ? event.qualityScore : null;
                                 const title = typeof event.title === 'string' ? event.title : 'Your product';
                                 setBuildState((s) => {
                                     // Save version for undo
@@ -292,7 +293,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 } else {
                                     addMessage({
                                         role: 'assistant',
-                                        content: `"${title}" is ready.${videosUsed ? ` Built from ${videosUsed} top videos.` : ''} Keep iterating in the chat to sharpen the final version.`,
+                                        content: `"${title}" is ready.${videosUsed ? ` Built from ${videosUsed} top videos.` : ''}${qualityScore !== null ? ` Quality score: ${qualityScore}/100.` : ''} Keep iterating in the chat to sharpen the final version.`,
                                     });
                                     onProductCreated();
                                 }

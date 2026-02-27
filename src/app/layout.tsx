@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth-provider";
+import { WebVitalsReporter } from "@/components/telemetry/WebVitalsReporter";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -32,6 +33,7 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <AuthProvider>
+          <WebVitalsReporter />
           {children}
           <Toaster position="top-right" richColors />
         </AuthProvider>

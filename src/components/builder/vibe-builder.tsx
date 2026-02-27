@@ -16,7 +16,7 @@ interface VibeBuilderProps {
     initialDsl: ProductDSL | null;
     initialHtml: string | null;
     initialBuildPacket: Record<string, unknown> | null;
-    onSave: (dsl: ProductDSL, html: string | null) => Promise<void>;
+    onSave: (dsl: ProductDSL, html: string | null, buildPacket: Record<string, unknown>) => Promise<void>;
     onPublish: () => Promise<void>;
 }
 
@@ -27,6 +27,155 @@ const DEVICE_WIDTHS: Record<DeviceMode, string> = {
     tablet: '768px',
     mobile: '375px',
 };
+
+interface QualityGateSnapshot {
+    key: string;
+    label: string;
+    score: number;
+    threshold: number;
+    passed: boolean;
+}
+
+interface QualityInsights {
+    overallScore: number | null;
+    overallPassed: boolean | null;
+    failingGates: string[];
+    designCanonVersion: string | null;
+    creativeDirectionId: string | null;
+    criticIterations: number | null;
+    gateScores: QualityGateSnapshot[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function gateLabel(key: string): string {
+    const labels: Record<string, string> = {
+        brandFidelity: 'Brand',
+        distinctiveness: 'Distinctive',
+        accessibility: 'A11y',
+        contentDepth: 'Depth',
+        evidenceLock: 'Evidence',
+    };
+    return labels[key] || key;
+}
+
+function toQualityInsightsFromBuildPacket(buildPacket: Record<string, unknown> | null): QualityInsights | null {
+    if (!isRecord(buildPacket)) return null;
+
+    const overallScore = typeof buildPacket.qualityOverallScore === 'number'
+        ? buildPacket.qualityOverallScore
+        : null;
+    const overallPassed = typeof buildPacket.qualityOverallPassed === 'boolean'
+        ? buildPacket.qualityOverallPassed
+        : null;
+    const failingGates = Array.isArray(buildPacket.qualityFailingGates)
+        ? buildPacket.qualityFailingGates
+            .map((item) => (typeof item === 'string' ? item : null))
+            .filter((item): item is string => Boolean(item))
+        : [];
+    const designCanonVersion = typeof buildPacket.designCanonVersion === 'string'
+        ? buildPacket.designCanonVersion
+        : null;
+    const creativeDirectionId = typeof buildPacket.creativeDirectionId === 'string'
+        ? buildPacket.creativeDirectionId
+        : null;
+    const criticIterations = typeof buildPacket.criticIterations === 'number'
+        ? buildPacket.criticIterations
+        : null;
+
+    const gateScores: QualityGateSnapshot[] = [];
+    if (isRecord(buildPacket.qualityGateScores)) {
+        for (const [key, raw] of Object.entries(buildPacket.qualityGateScores)) {
+            if (!isRecord(raw)) continue;
+            const score = typeof raw.score === 'number' ? raw.score : null;
+            const threshold = typeof raw.threshold === 'number' ? raw.threshold : null;
+            const passed = typeof raw.passed === 'boolean' ? raw.passed : null;
+            if (score === null || threshold === null || passed === null) continue;
+            gateScores.push({
+                key,
+                label: gateLabel(key),
+                score,
+                threshold,
+                passed,
+            });
+        }
+    }
+
+    if (overallScore === null && gateScores.length === 0 && !designCanonVersion && !creativeDirectionId) {
+        return null;
+    }
+
+    return {
+        overallScore,
+        overallPassed,
+        failingGates,
+        designCanonVersion,
+        creativeDirectionId,
+        criticIterations,
+        gateScores,
+    };
+}
+
+function mergeBuildPacketWithMetadata(
+    packet: Record<string, unknown>,
+    metadata: Record<string, unknown> | null
+): Record<string, unknown> {
+    if (!metadata) return packet;
+    const merged: Record<string, unknown> = { ...packet };
+
+    if (typeof metadata.qualityScore === 'number') merged.qualityOverallScore = metadata.qualityScore;
+    if (typeof metadata.qualityPassed === 'boolean') merged.qualityOverallPassed = metadata.qualityPassed;
+    if (Array.isArray(metadata.failingGates)) merged.qualityFailingGates = metadata.failingGates;
+    if (typeof metadata.designCanonVersion === 'string') merged.designCanonVersion = metadata.designCanonVersion;
+    if (typeof metadata.creativeDirectionId === 'string') merged.creativeDirectionId = metadata.creativeDirectionId;
+    if (typeof metadata.criticIterations === 'number') merged.criticIterations = metadata.criticIterations;
+    if (Array.isArray(metadata.criticModels)) merged.criticModels = metadata.criticModels;
+
+    return merged;
+}
+
+function mergeQualityInsightsWithMetadata(
+    existing: QualityInsights | null,
+    metadata: Record<string, unknown> | null
+): QualityInsights | null {
+    if (!metadata) return existing;
+
+    const hasAnyQualitySignal = (
+        typeof metadata.qualityScore === 'number'
+        || typeof metadata.qualityPassed === 'boolean'
+        || Array.isArray(metadata.failingGates)
+        || typeof metadata.designCanonVersion === 'string'
+        || typeof metadata.creativeDirectionId === 'string'
+    );
+
+    if (!hasAnyQualitySignal) return existing;
+
+    return {
+        overallScore: typeof metadata.qualityScore === 'number'
+            ? metadata.qualityScore
+            : (existing?.overallScore ?? null),
+        overallPassed: typeof metadata.qualityPassed === 'boolean'
+            ? metadata.qualityPassed
+            : (existing?.overallPassed ?? null),
+        failingGates: Array.isArray(metadata.failingGates)
+            ? metadata.failingGates
+                .map((item) => (typeof item === 'string' ? item : null))
+                .filter((item): item is string => Boolean(item))
+            : (existing?.failingGates ?? []),
+        designCanonVersion: typeof metadata.designCanonVersion === 'string'
+            ? metadata.designCanonVersion
+            : (existing?.designCanonVersion ?? null),
+        creativeDirectionId: typeof metadata.creativeDirectionId === 'string'
+            ? metadata.creativeDirectionId
+            : (existing?.creativeDirectionId ?? null),
+        criticIterations: typeof metadata.criticIterations === 'number'
+            ? metadata.criticIterations
+            : (existing?.criticIterations ?? null),
+        gateScores: existing?.gateScores || [],
+    };
+}
 
 export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPacket, onSave, onPublish }: VibeBuilderProps) {
     // State
@@ -52,6 +201,13 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
     const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([]);
     const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
     const [lastSavedHtml, setLastSavedHtml] = useState<string | null>(initialHtml);
+    const [workingBuildPacket, setWorkingBuildPacket] = useState<Record<string, unknown>>(() => {
+        if (isRecord(initialBuildPacket)) return { ...initialBuildPacket };
+        return {};
+    });
+    const [qualityInsights, setQualityInsights] = useState<QualityInsights | null>(() => (
+        toQualityInsightsFromBuildPacket(isRecord(initialBuildPacket) ? initialBuildPacket : null)
+    ));
     const chatEndRef = useRef<HTMLDivElement>(null);
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -64,7 +220,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
         autoSaveTimer.current = setTimeout(async () => {
             try {
-                await onSave(dsl, generatedHtml);
+                await onSave(dsl, generatedHtml, workingBuildPacket);
                 setLastSavedHtml(generatedHtml);
             } catch {
                 // silent — will retry on next change
@@ -74,7 +230,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         return () => {
             if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
         };
-    }, [generatedHtml, dsl, lastSavedHtml, onSave]);
+    }, [generatedHtml, dsl, lastSavedHtml, onSave, workingBuildPacket]);
 
     // --- Full AI Generation (HTML+Tailwind) with SSE Streaming ---
     const handleAiGenerate = useCallback(async () => {
@@ -82,14 +238,13 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         setAiProgress('Connecting to AI...');
 
         try {
-            // Use the real build packet if available (from product chat),
-            // otherwise construct a minimal one from the DSL
-            const buildPacket = initialBuildPacket && Object.keys(initialBuildPacket).length > 0
+            // Use the latest working build packet when available; otherwise build a minimal packet.
+            const buildPacket = Object.keys(workingBuildPacket).length > 0
                 ? {
-                    ...initialBuildPacket,
-                    productType: initialBuildPacket.productType || dsl.product.type,
+                    ...workingBuildPacket,
+                    productType: workingBuildPacket.productType || dsl.product.type,
                     title: dsl.product.title,
-                    tone: dsl.themeTokens?.mood || (initialBuildPacket.tone as string) || 'professional',
+                    tone: dsl.themeTokens?.mood || (typeof workingBuildPacket.tone === 'string' ? workingBuildPacket.tone : 'professional'),
                     brandTokens: dsl.themeTokens,
                 }
                 : {
@@ -119,7 +274,23 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                 setGeneratedHtml(data.html);
                 if (data.dsl) setDsl(data.dsl);
                 setAiProgress('');
-                setChatHistory([{ role: 'ai', message: '✨ Your product page is ready! Use the chat below to refine the design.' }]);
+                const metadata = isRecord(data.metadata) ? data.metadata : null;
+                const updatedPacket = mergeBuildPacketWithMetadata(buildPacket, metadata);
+                setWorkingBuildPacket(updatedPacket);
+                setQualityInsights((prev) => (
+                    mergeQualityInsightsWithMetadata(
+                        prev || toQualityInsightsFromBuildPacket(updatedPacket),
+                        metadata
+                    )
+                ));
+
+                const qualityScore = metadata && typeof metadata.qualityScore === 'number'
+                    ? metadata.qualityScore
+                    : null;
+                setChatHistory([{
+                    role: 'ai',
+                    message: `✨ Your product page is ready!${qualityScore !== null ? ` Quality score: ${qualityScore}/100.` : ''} Use the chat below to refine the design.`,
+                }]);
             } else if (data.dsl) {
                 // Fallback: legacy DSL response
                 setDsl(data.dsl);
@@ -131,7 +302,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
             setAiProgress(`Error: ${err instanceof Error ? err.message : 'Network error'}`);
         }
         setAiLoading(false);
-    }, [dsl, initialBuildPacket]);
+    }, [dsl, workingBuildPacket]);
 
     // --- AI Improve (send current HTML + instruction) ---
     const handleAiImprove = useCallback(async (directPrompt?: string) => {
@@ -178,14 +349,14 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         setActionError(null);
         setSaving(true);
         try {
-            await onSave(dsl, generatedHtml);
+            await onSave(dsl, generatedHtml, workingBuildPacket);
             setLastSavedHtml(generatedHtml);
         } catch (err) {
             setActionError(err instanceof Error ? err.message : 'Could not save your draft.');
         } finally {
             setSaving(false);
         }
-    }, [dsl, generatedHtml, onSave]);
+    }, [dsl, generatedHtml, onSave, workingBuildPacket]);
 
     const isSaved = generatedHtml === lastSavedHtml;
 
@@ -292,6 +463,50 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                             <option value="premium">Premium</option>
                             <option value="energetic">Energetic</option>
                         </select>
+
+                        {qualityInsights && (
+                            <div className="mt-3 rounded-lg border border-white/20 bg-white/5 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold tracking-wide uppercase text-slate-300">Quality Insights</p>
+                                    {qualityInsights.overallScore !== null && (
+                                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${qualityInsights.overallPassed
+                                            ? 'text-emerald-200 border-emerald-300/40 bg-emerald-400/15'
+                                            : 'text-amber-200 border-amber-300/40 bg-amber-400/15'
+                                            }`}>
+                                            {qualityInsights.overallScore}/100
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="mt-2 text-xs text-slate-300 space-y-1">
+                                    {qualityInsights.designCanonVersion && (
+                                        <p><span className="text-slate-400">Canon:</span> {qualityInsights.designCanonVersion}</p>
+                                    )}
+                                    {qualityInsights.creativeDirectionId && (
+                                        <p><span className="text-slate-400">Direction:</span> {qualityInsights.creativeDirectionId.replace(/-/g, ' ')}</p>
+                                    )}
+                                    {qualityInsights.criticIterations !== null && (
+                                        <p><span className="text-slate-400">Critic iterations:</span> {qualityInsights.criticIterations}</p>
+                                    )}
+                                </div>
+                                {qualityInsights.gateScores.length > 0 && (
+                                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                                        {qualityInsights.gateScores.map((gate) => (
+                                            <div key={gate.key} className="rounded border border-white/15 bg-black/20 px-2 py-1">
+                                                <p className="text-[10px] uppercase tracking-wide text-slate-400">{gate.label}</p>
+                                                <p className={`text-xs font-semibold ${gate.passed ? 'text-emerald-200' : 'text-amber-200'}`}>
+                                                    {gate.score}/{gate.threshold}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {qualityInsights.failingGates.length > 0 && (
+                                    <p className="mt-2 text-[11px] text-amber-200">
+                                        Open gates: {qualityInsights.failingGates.map((gate) => gateLabel(gate)).join(', ')}
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Generate Button — shown when no HTML exists */}

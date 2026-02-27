@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated QA artifacts:
+    "storybook-static/**",
+    "test-results/**",
+    ".lighthouseci/**",
+    "playwright-report/**",
   ]),
 ]);
 

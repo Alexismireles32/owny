@@ -8,9 +8,71 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { generateDSLWithRetry, generateProductWithRetry, KimiBuilder } from '@/lib/ai/router';
+import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
+import {
+    buildDesignCanonContext,
+    chooseCreativeDirection,
+    getEvergreenDesignCanon,
+} from '@/lib/ai/design-canon';
+import { evaluateProductQuality } from '@/lib/ai/quality-gates';
+import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import type { BuildPacket } from '@/types/build-packet';
+
+async function loadCreatorCatalogHtml(
+    supabase: Awaited<ReturnType<typeof createClient>>,
+    creatorId: string
+): Promise<string[]> {
+    const { data: products, error: productsError } = await supabase
+        .from('products')
+        .select('active_version_id')
+        .eq('creator_id', creatorId)
+        .not('active_version_id', 'is', null)
+        .limit(30);
+
+    if (productsError || !products || products.length === 0) {
+        return [];
+    }
+
+    const versionIds = products
+        .map((row) => row.active_version_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .slice(0, 30);
+
+    if (versionIds.length === 0) return [];
+
+    const { data: versions, error: versionsError } = await supabase
+        .from('product_versions')
+        .select('generated_html')
+        .in('id', versionIds)
+        .limit(30);
+
+    if (versionsError || !versions) {
+        return [];
+    }
+
+    return versions
+        .map((row) => row.generated_html)
+        .filter((html): html is string => typeof html === 'string' && html.trim().length > 0);
+}
+
+function buildSourceContextFromPacket(buildPacket: BuildPacket): string {
+    return (buildPacket.sources || [])
+        .slice(0, 25)
+        .map((source, idx) => {
+            const bullets = Array.isArray(source.keyBullets) ? source.keyBullets.slice(0, 8) : [];
+            const tags = Array.isArray(source.tags) ? source.tags.slice(0, 8) : [];
+
+            return `--- SOURCE ${idx + 1} [ID: ${source.videoId}] ---
+TITLE: ${source.title || 'Untitled'}
+TAGS: ${tags.length > 0 ? tags.join(', ') : 'N/A'}
+KEY BULLETS:
+${bullets.length > 0 ? bullets.map((item) => `- ${item}`).join('\n') : '- (none)'}
+---`;
+        })
+        .join('\n\n');
+}
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -31,7 +93,7 @@ export async function POST(request: Request) {
     // Verify creator
     const { data: creator } = await supabase
         .from('creators')
-        .select('id')
+        .select('id, handle, display_name, bio, brand_tokens, voice_profile')
         .eq('profile_id', user.id)
         .single();
 
@@ -85,14 +147,90 @@ export async function POST(request: Request) {
     // Default: Full HTML code generation
     try {
         const { html, dsl, model } = await generateProductWithRetry(buildPacket, creator.id);
+        const sourceVideoIds = (buildPacket.sources || [])
+            .map((source) => source.videoId)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        const catalogHtml = await loadCreatorCatalogHtml(supabase, creator.id);
+
+        const creatorDna = buildCreatorDNA({
+            handle: creator.handle,
+            displayName: creator.display_name,
+            bio: creator.bio,
+            voiceProfile: (creator.voice_profile as Record<string, unknown> | null) || null,
+            brandTokens: (creator.brand_tokens as Record<string, unknown> | null) || null,
+        });
+        const creatorDnaContext = buildCreatorDNAContext(creatorDna);
+        const designCanon = getEvergreenDesignCanon();
+        const creativeDirection = chooseCreativeDirection({
+            productType: buildPacket.productType,
+            creatorId: creator.id,
+            topicQuery: buildPacket.userPrompt || 'creator product',
+            creatorMood: creatorDna.visual.mood,
+            priorProductCount: catalogHtml.length,
+        });
+        const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
+        const sourceContext = buildSourceContextFromPacket(buildPacket);
+
+        let finalHtml = html;
+        let qualityEvaluation = evaluateProductQuality({
+            html: finalHtml,
+            productType: buildPacket.productType,
+            sourceVideoIds,
+            catalogHtml,
+            brandTokens: (creator.brand_tokens as Record<string, unknown> | null) || null,
+            creatorHandle: creator.handle,
+            qualityWeights: designCanon.qualityWeights,
+        });
+
+        let criticIterations = 0;
+        let criticModels: string[] = [];
+
+        if (!qualityEvaluation.overallPassed) {
+            try {
+                const criticResult = await runEvergreenCriticLoop({
+                    html: finalHtml,
+                    productType: buildPacket.productType,
+                    sourceVideoIds,
+                    catalogHtml,
+                    brandTokens: (creator.brand_tokens as Record<string, unknown> | null) || null,
+                    creatorHandle: creator.handle,
+                    creatorDisplayName: creator.display_name || creator.handle,
+                    topicQuery: buildPacket.userPrompt || 'creator product',
+                    originalRequest: buildPacket.userPrompt || 'Build a creator digital product',
+                    creatorDnaContext,
+                    designCanonContext,
+                    directionId: creativeDirection.id,
+                    contentContext: sourceContext,
+                    maxIterations: 2,
+                    qualityWeights: designCanon.qualityWeights,
+                });
+
+                finalHtml = criticResult.html;
+                qualityEvaluation = criticResult.evaluation;
+                criticIterations = criticResult.iterationsRun;
+                criticModels = criticResult.modelTrail;
+            } catch (criticError) {
+                log.warn('Evergreen critic loop failed in /api/ai/build-product', {
+                    error: criticError instanceof Error ? criticError.message : 'Unknown critic error',
+                    creatorId: creator.id,
+                });
+            }
+        }
 
         return NextResponse.json({
-            html,
+            html: finalHtml,
             dsl,
             metadata: {
                 model,
                 generatedAt: new Date().toISOString(),
-                htmlLength: html.length,
+                htmlLength: finalHtml.length,
+                qualityScore: qualityEvaluation.overallScore,
+                qualityPassed: qualityEvaluation.overallPassed,
+                failingGates: qualityEvaluation.failingGates,
+                designCanonVersion: designCanon.version,
+                creativeDirectionId: creativeDirection.id,
+                criticIterations,
+                criticModels,
             },
         });
     } catch (err) {

@@ -1,0 +1,36 @@
+{
+  "color": {
+    "background": { "$value": "oklch(1 0 0)", "$type": "color" },
+    "foreground": { "$value": "oklch(0.145 0 0)", "$type": "color" },
+    "card": { "$value": "oklch(1 0 0)", "$type": "color" },
+    "cardForeground": { "$value": "oklch(0.145 0 0)", "$type": "color" },
+    "popover": { "$value": "oklch(1 0 0)", "$type": "color" },
+    "popoverForeground": { "$value": "oklch(0.145 0 0)", "$type": "color" },
+    "primary": { "$value": "oklch(0.205 0 0)", "$type": "color" },
+    "primaryForeground": { "$value": "oklch(0.985 0 0)", "$type": "color" },
+    "secondary": { "$value": "oklch(0.97 0 0)", "$type": "color" },
+    "secondaryForeground": { "$value": "oklch(0.205 0 0)", "$type": "color" },
+    "muted": { "$value": "oklch(0.97 0 0)", "$type": "color" },
+    "mutedForeground": { "$value": "oklch(0.556 0 0)", "$type": "color" },
+    "accent": { "$value": "oklch(0.97 0 0)", "$type": "color" },
+    "accentForeground": { "$value": "oklch(0.205 0 0)", "$type": "color" },
+    "destructive": { "$value": "oklch(0.577 0.245 27.325)", "$type": "color" },
+    "border": { "$value": "oklch(0.922 0 0)", "$type": "color" },
+    "input": { "$value": "oklch(0.922 0 0)", "$type": "color" },
+    "ring": { "$value": "oklch(0.708 0 0)", "$type": "color" }
+  },
+  "chart": {
+    "one": { "$value": "oklch(0.646 0.222 41.116)", "$type": "color" },
+    "two": { "$value": "oklch(0.6 0.118 184.704)", "$type": "color" },
+    "three": { "$value": "oklch(0.398 0.07 227.392)", "$type": "color" },
+    "four": { "$value": "oklch(0.828 0.189 84.429)", "$type": "color" },
+    "five": { "$value": "oklch(0.769 0.188 70.08)", "$type": "color" }
+  },
+  "radius": {
+    "base": { "$value": "0.625rem", "$type": "dimension" },
+    "sm": { "$value": "calc({radius.base} - 4px)", "$type": "dimension" },
+    "md": { "$value": "calc({radius.base} - 2px)", "$type": "dimension" },
+    "lg": { "$value": "{radius.base}", "$type": "dimension" },
+    "xl": { "$value": "calc({radius.base} + 4px)", "$type": "dimension" }
+  }
+}

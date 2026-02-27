@@ -34,3 +34,44 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Quality Gates
+
+Run the full local quality pipeline:
+
+```bash
+npm run quality:gates
+```
+
+This runs:
+
+- design token build (`style-dictionary`)
+- ESLint + unit tests
+- Storybook Vitest browser tests (including a11y checks)
+- production build
+- Playwright visual snapshot regression
+- Lighthouse CI assertions (performance + accessibility + CWV thresholds)
+
+## Chromatic Setup (GitHub)
+
+Cloud visual review is enabled in CI when the repository secret below is set:
+
+- `CHROMATIC_PROJECT_TOKEN`
+
+Add it in GitHub:
+
+1. Repository `Settings`
+2. `Secrets and variables` -> `Actions`
+3. `New repository secret`
+4. Name: `CHROMATIC_PROJECT_TOKEN`
+5. Value: your Chromatic project token
+
+Without this secret, quality gates still run, but the Chromatic upload step is skipped.
+
+## INP Field Data (RUM)
+
+Real-user INP collection is wired through Sentry in the client app via `src/components/telemetry/WebVitalsReporter.tsx`.
+
+- metric captured: `INP`
+- transport: Sentry events (`message: web-vitals.inp`)
+- sampling: `NEXT_PUBLIC_WEB_VITALS_SAMPLE_RATE` (default `0.2`)
