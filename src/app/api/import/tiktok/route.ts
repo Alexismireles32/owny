@@ -106,7 +106,7 @@ async function runTikTokImport(
                 source: 'scrapecreators' as const,
                 external_video_id: v.externalVideoId,
                 url: v.url,
-                title: v.title,
+                title: v.title || v.description || null,
                 description: v.description,
                 views: v.views,
                 likes: v.likes,
@@ -121,7 +121,7 @@ async function runTikTokImport(
                 .from('videos')
                 .upsert(videoRows, {
                     onConflict: 'creator_id,external_video_id',
-                    ignoreDuplicates: true,
+                    ignoreDuplicates: false,
                 });
 
             if (insertError) {
@@ -139,7 +139,7 @@ async function runTikTokImport(
         // 3. Fetch transcripts for videos without them
         const { data: videosNeedingTranscripts } = await supabase
             .from('videos')
-            .select('id, url, external_video_id')
+            .select('id, url, title, description, views, likes, comments_count, shares, thumbnail_url, duration, created_at_source')
             .eq('creator_id', creatorId)
             .not('url', 'is', null);
 
@@ -166,11 +166,26 @@ async function runTikTokImport(
                     });
 
                     if (result) {
-                        await supabase.from('video_transcripts').insert({
+                        await supabase.from('video_transcripts').upsert({
+                            creator_id: creatorId,
                             video_id: video.id,
+                            platform: 'tiktok',
+                            title: video.title || video.description || null,
+                            description: video.description || null,
+                            views: video.views || 0,
+                            likes: video.likes || 0,
+                            comments: video.comments_count || 0,
+                            shares: video.shares || 0,
+                            thumbnail_url: video.thumbnail_url || null,
                             transcript_text: result.transcriptText,
+                            webvtt_url: null,
+                            duration_seconds: video.duration || 0,
+                            posted_at: video.created_at_source || null,
                             language: result.language,
                             source: result.source,
+                        }, {
+                            onConflict: 'creator_id,video_id',
+                            ignoreDuplicates: false,
                         });
                         transcriptsFetched++;
                     }

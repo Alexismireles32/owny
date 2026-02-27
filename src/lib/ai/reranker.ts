@@ -54,6 +54,30 @@ OUTPUT (JSON only, no markdown fences):
   "confidence": "high" | "medium" | "low"
 }`;
 
+function normalizeString(input: unknown): string | null {
+    if (typeof input !== 'string') return null;
+    const cleaned = input.trim().replace(/\s+/g, ' ');
+    return cleaned.length > 0 ? cleaned : null;
+}
+
+function readStringArray(source: Record<string, unknown>, keys: string[]): string[] {
+    for (const key of keys) {
+        const value = source[key];
+        if (!Array.isArray(value)) continue;
+
+        const normalized = value
+            .map((item) => normalizeString(item))
+            .filter((item): item is string => Boolean(item))
+            .slice(0, 8);
+
+        if (normalized.length > 0) {
+            return normalized;
+        }
+    }
+
+    return [];
+}
+
 function normalizeResult(
     raw: ParsedRerankResult,
     candidates: ClipCardInput[],
@@ -137,16 +161,24 @@ export async function rerankCandidates(
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-    // Compress clip cards for context window efficiency
-    const compressedCards = candidates.slice(0, 60).map((c) => ({
-        id: c.videoId,
-        title: c.title,
-        ...(c.clipCard ? {
-            topics: (c.clipCard as Record<string, unknown>).topics,
-            keyPoints: (c.clipCard as Record<string, unknown>).keyBullets || (c.clipCard as Record<string, unknown>).key_points,
-            tags: (c.clipCard as Record<string, unknown>).tags,
-        } : {}),
-    }));
+    // Compress cards with normalized field aliases for stable reranking quality.
+    const compressedCards = candidates.slice(0, 60).map((c) => {
+        const card = (c.clipCard || {}) as Record<string, unknown>;
+        const topics = readStringArray(card, ['topicTags', 'topics', 'tags']);
+        const keyPoints = readStringArray(card, ['keySteps', 'keyBullets', 'key_points']);
+
+        return {
+            id: c.videoId,
+            title: c.title,
+            topics,
+            keyPoints,
+            tags: readStringArray(card, ['tags', 'topicTags']),
+            whoItsFor: normalizeString(card.whoItsFor),
+            outcome: normalizeString(card.outcome),
+            bestHook: normalizeString(card.bestHook),
+            contentType: normalizeString(card.contentType),
+        };
+    });
 
     const userMessage = `Product Type: ${productType}
 Product Request: ${productRequest}

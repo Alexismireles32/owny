@@ -27,6 +27,22 @@ function tokenizeQuery(query: string): string[] {
         .filter((token) => token.length >= 3);
 }
 
+function deriveFallbackTags(row: TranscriptFallbackRow): string[] {
+    const source = `${row.title || ''} ${row.description || ''}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 4);
+
+    const unique: string[] = [];
+    for (const token of source) {
+        if (unique.includes(token)) continue;
+        unique.push(token);
+        if (unique.length >= 6) break;
+    }
+    return unique;
+}
+
 function scoreTranscriptMatch(
     row: TranscriptFallbackRow,
     tokens: string[]
@@ -74,7 +90,11 @@ async function fallbackTranscriptSearch(
             scored.push({
                 videoId: row.video_id,
                 title: row.title,
-                clipCard: null,
+                clipCard: {
+                    topicTags: deriveFallbackTags(row),
+                    keySteps: [],
+                    bestHook: row.transcript_text.slice(0, 180),
+                },
                 score: lexicalScore,
                 source: 'fts',
             });
@@ -90,7 +110,11 @@ async function fallbackTranscriptSearch(
         return byLength.map((row, idx) => ({
             videoId: row.video_id,
             title: row.title,
-            clipCard: null,
+            clipCard: {
+                topicTags: deriveFallbackTags(row),
+                keySteps: [],
+                bestHook: row.transcript_text.slice(0, 180),
+            },
             score: 0.05 - idx * 0.0001,
             source: 'fts',
         }));
