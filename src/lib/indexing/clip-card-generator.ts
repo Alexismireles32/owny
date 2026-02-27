@@ -4,6 +4,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ClipCard } from '@/types/clip-card';
 import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { z } from 'zod';
 
 const SYSTEM_PROMPT = `You are a Content Indexer. Given a video transcript and metadata, produce a structured
 Clip Card as JSON. This card will be used for search and retrieval — make it precise.
@@ -23,6 +25,18 @@ OUTPUT FORMAT (JSON only, no markdown fencing):
 
 contentType must be one of: tutorial, story, review, tips, routine, other
 Return ONLY valid JSON, no explanation or markdown.`;
+
+const ClipCardSchema = z.object({
+    topicTags: z.array(z.string()).default([]),
+    title: z.string().min(1),
+    keySteps: z.array(z.string()).default([]),
+    whoItsFor: z.string().default(''),
+    outcome: z.string().default(''),
+    warnings: z.array(z.string()).default([]),
+    bestHook: z.string().default(''),
+    contentType: z.enum(['tutorial', 'story', 'review', 'tips', 'routine', 'other']),
+    estimatedDuration: z.string().default(''),
+});
 
 function getAnthropicClient(): Anthropic {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -56,29 +70,27 @@ export async function generateClipCard(
         },
     });
 
-    const response = await client.messages.create({
+    const response = await client.messages.parse({
         model: 'claude-haiku-4-5-20241022',
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userMessage }],
+        output_config: {
+            format: zodOutputFormat(ClipCardSchema),
+        },
     });
 
-    // Extract text from response
-    const text = response.content
-        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('');
-
-    // Parse JSON — handle potential markdown fencing
-    const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsed = JSON.parse(jsonStr) as ClipCard;
+    const parsed = response.parsed_output;
+    if (!parsed) {
+        throw new Error('Clip card generation returned empty structured output');
+    }
 
     // Validate required fields
     if (!parsed.topicTags || !parsed.title || !parsed.contentType) {
         throw new Error('Invalid clip card: missing required fields');
     }
 
-    return parsed;
+    return parsed as ClipCard;
 }
 
 /**

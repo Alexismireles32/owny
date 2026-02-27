@@ -2,6 +2,8 @@
 // PRD §5.4 — Rerank + Select via Claude Sonnet 4.5
 
 import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { z } from 'zod';
 
 interface ClipCardInput {
     videoId: string;
@@ -18,6 +20,20 @@ interface RerankResult {
     coverageGaps: string[];
     confidence: 'high' | 'medium' | 'low';
 }
+
+const SelectedVideoSchema = z.object({
+    videoId: z.string().min(1),
+    reason: z.string().default('Selected based on topic relevance'),
+    relevanceScore: z.number().min(0).max(1).default(0.6),
+});
+
+const RerankResultSchema = z.object({
+    selectedVideos: z.array(SelectedVideoSchema).default([]),
+    coverageGaps: z.array(z.string()).default([]),
+    confidence: z.enum(['high', 'medium', 'low']).default('medium'),
+});
+
+type ParsedRerankResult = z.infer<typeof RerankResultSchema>;
 
 const RERANK_SYSTEM_PROMPT = `You are a Content Curator. Given a product request and a list of video clip cards,
 select up to 25 most relevant videos and rank them by relevance.
@@ -38,92 +54,24 @@ OUTPUT (JSON only, no markdown fences):
   "confidence": "high" | "medium" | "low"
 }`;
 
-function stripMarkdownFences(text: string): string {
-    return text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-}
-
-function extractFirstJsonObject(text: string): string | null {
-    const start = text.indexOf('{');
-    if (start === -1) return null;
-
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = start; i < text.length; i++) {
-        const ch = text[i];
-
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-
-        if (ch === '\\') {
-            escaped = true;
-            continue;
-        }
-
-        if (ch === '"') {
-            inString = !inString;
-            continue;
-        }
-
-        if (inString) continue;
-
-        if (ch === '{') depth += 1;
-        if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return text.slice(start, i + 1);
-            }
-        }
-    }
-
-    return null;
-}
-
-function parseRerankerResponse(text: string): RerankResult {
-    const cleaned = stripMarkdownFences(text);
-
-    try {
-        return JSON.parse(cleaned) as RerankResult;
-    } catch {
-        const extracted = extractFirstJsonObject(cleaned);
-        if (!extracted) {
-            throw new Error('Reranker returned non-JSON response.');
-        }
-
-        try {
-            return JSON.parse(extracted) as RerankResult;
-        } catch {
-            throw new Error('Reranker returned malformed JSON.');
-        }
-    }
-}
-
 function normalizeResult(
-    raw: RerankResult,
+    raw: ParsedRerankResult,
     candidates: ClipCardInput[],
 ): RerankResult {
     const candidateIds = new Set(candidates.map((c) => c.videoId));
     const deduped = new Set<string>();
-    const selectedVideos = Array.isArray(raw.selectedVideos)
-        ? raw.selectedVideos
-            .map((item) => {
-                const videoId = String(item?.videoId || '').trim();
-                if (!videoId || !candidateIds.has(videoId) || deduped.has(videoId)) return null;
-                deduped.add(videoId);
-                return {
-                    videoId,
-                    reason: String(item?.reason || 'Selected based on topic relevance').slice(0, 300),
-                    relevanceScore:
-                        typeof item?.relevanceScore === 'number'
-                            ? Math.max(0, Math.min(item.relevanceScore, 1))
-                            : 0.6,
-                };
-            })
-            .filter((item): item is { videoId: string; reason: string; relevanceScore: number } => Boolean(item))
-        : [];
+    const selectedVideos = raw.selectedVideos
+        .map((item) => {
+            const videoId = item.videoId.trim();
+            if (!videoId || !candidateIds.has(videoId) || deduped.has(videoId)) return null;
+            deduped.add(videoId);
+            return {
+                videoId,
+                reason: item.reason.slice(0, 300),
+                relevanceScore: Math.max(0, Math.min(item.relevanceScore, 1)),
+            };
+        })
+        .filter((item): item is { videoId: string; reason: string; relevanceScore: number } => Boolean(item));
 
     if (selectedVideos.length === 0) {
         const fallback = candidates.slice(0, Math.min(candidates.length, 8)).map((c, idx) => ({
@@ -139,19 +87,12 @@ function normalizeResult(
         };
     }
 
-    const coverageGaps = Array.isArray(raw.coverageGaps)
-        ? raw.coverageGaps
-            .map((gap) => String(gap).trim())
-            .filter((gap) => gap.length > 0)
-            .slice(0, 10)
-        : [];
+    const coverageGaps = raw.coverageGaps
+        .map((gap) => String(gap).trim())
+        .filter((gap) => gap.length > 0)
+        .slice(0, 10);
 
-    const confidence: 'high' | 'medium' | 'low' =
-        raw.confidence === 'high' || raw.confidence === 'medium' || raw.confidence === 'low'
-            ? raw.confidence
-            : selectedVideos.length >= 8
-                ? 'medium'
-                : 'low';
+    const confidence: 'high' | 'medium' | 'low' = raw.confidence;
 
     return {
         selectedVideos,
@@ -214,24 +155,30 @@ Available Videos (${compressedCards.length} candidates):
 ${JSON.stringify(compressedCards, null, 1)}`;
 
     try {
-        const response = await anthropic.messages.create({
+        const response = await anthropic.messages.parse({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: RERANK_SYSTEM_PROMPT,
             messages: [{ role: 'user', content: userMessage }],
+            output_config: {
+                format: zodOutputFormat(RerankResultSchema),
+            },
         });
 
-        const text = response.content
-            .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-            .map((b) => b.text)
-            .join('');
+        const parsed = response.parsed_output;
+        if (!parsed) {
+            return buildDeterministicFallback(
+                candidates,
+                'AI reranker returned empty structured output; used deterministic fallback selection.',
+            );
+        }
 
-        const parsed = parseRerankerResponse(text);
         return normalizeResult(parsed, candidates);
-    } catch {
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         return buildDeterministicFallback(
             candidates,
-            'AI reranker failed; used deterministic fallback selection.',
+            `AI reranker failed (${message.slice(0, 180)}); used deterministic fallback selection.`,
         );
     }
 }

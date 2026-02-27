@@ -2,7 +2,9 @@
 // PRD §5.5 — Build Packet generation via Claude Sonnet 4.5
 
 import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { BuildPacket, ProductType, BrandTokens, SourceVideo } from '@/types/build-packet';
+import { z } from 'zod';
 
 interface PlannerInput {
     productType: ProductType;
@@ -24,6 +26,42 @@ interface PlannerInput {
         reason: string;
     }[];
 }
+
+const ProductTypeSchema = z.enum(['pdf_guide', 'mini_course', 'challenge_7day', 'checklist_toolkit']);
+
+const BuildPacketSchema = z.object({
+    productType: ProductTypeSchema,
+    creator: z.object({
+        handle: z.string().min(1),
+        displayName: z.string().optional(),
+        brandTokens: z.record(z.string(), z.unknown()).optional(),
+        tone: z.string().optional(),
+    }).passthrough(),
+    userPrompt: z.string().min(1),
+    sources: z.array(
+        z.object({
+            videoId: z.string().min(1),
+            title: z.string().nullable().optional(),
+            keyBullets: z.array(z.string()).optional(),
+            tags: z.array(z.string()).optional(),
+        }).passthrough(),
+    ).min(1),
+    salesPage: z.object({
+        headline: z.string().min(1),
+        subhead: z.string().optional(),
+        benefits: z.array(z.string()).optional(),
+        testimonials: z.array(z.unknown()).optional(),
+        faq: z.array(z.unknown()).optional(),
+        ctaText: z.string().optional(),
+        priceText: z.string().optional(),
+        suggestedPriceCents: z.number().int().optional(),
+    }).passthrough(),
+    content: z.object({
+        type: ProductTypeSchema,
+    }).passthrough(),
+    designIntent: z.object({}).passthrough(),
+    compliance: z.object({}).passthrough().optional(),
+}).passthrough();
 
 const PLANNER_SYSTEM_PROMPT = `You are a Digital Product Strategist for social media creators. Given a product request,
 selected source videos, and brand DNA, produce a complete Build Packet.
@@ -59,15 +97,16 @@ The JSON must have these top-level keys:
 export async function generateBuildPacket(input: PlannerInput): Promise<BuildPacket> {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-    // Build source context
-    const sourcesContext = input.selectedVideos.map((v) => ({
-        videoId: v.videoId,
-        title: v.title,
-        reason: v.reason,
-        clipCard: v.clipCard,
-    }));
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        const sourceLimit = attempt === 1 ? input.selectedVideos.length : Math.min(input.selectedVideos.length, 40);
+        const sourcesContext = input.selectedVideos.slice(0, sourceLimit).map((v) => ({
+            videoId: v.videoId,
+            title: v.title,
+            reason: v.reason,
+            clipCard: v.clipCard,
+        }));
 
-    const userMessage = `Product Type: ${input.productType}
+        const userMessage = `Product Type: ${input.productType}
 Creator Request: "${input.userPrompt}"
 ${input.audience ? `Target Audience: ${input.audience}` : ''}
 ${input.tone ? `Desired Tone: ${input.tone}` : ''}
@@ -88,26 +127,34 @@ ${JSON.stringify(sourcesContext, null, 1)}
 
 Generate a complete Build Packet JSON for this product. The content sections must contain REAL, SUBSTANTIAL written content — not summaries or placeholders. Write as if you ARE this creator.`;
 
-    const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8192,
-        system: PLANNER_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
-    });
+        try {
+            const response = await anthropic.messages.parse({
+                model: 'claude-sonnet-4-6',
+                max_tokens: 8192,
+                system: PLANNER_SYSTEM_PROMPT,
+                messages: [{ role: 'user', content: userMessage }],
+                output_config: {
+                    format: zodOutputFormat(BuildPacketSchema),
+                },
+            });
 
-    const text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('');
+            const parsed = response.parsed_output;
+            if (!parsed) {
+                throw new Error('Planner returned empty structured output');
+            }
 
-    // Parse JSON
-    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const packet = JSON.parse(jsonStr) as BuildPacket;
+            const packet = parsed as unknown as BuildPacket;
+            validateBuildPacket(packet);
+            return packet;
+        } catch (error) {
+            if (attempt === 2) {
+                const message = error instanceof Error ? error.message : String(error);
+                throw new Error(`Build Packet generation failed after retry: ${message}`);
+            }
+        }
+    }
 
-    // Validate required fields
-    validateBuildPacket(packet);
-
-    return packet;
+    throw new Error('Build Packet generation failed: unreachable retry state');
 }
 
 /**

@@ -13,6 +13,8 @@ import {
 import { log } from '@/lib/logger';
 import { indexVideo } from '@/lib/indexing/orchestrator';
 import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { z } from 'zod';
 import { triggerImportCompletedEmail, triggerImportFailedEmail } from '@/lib/email/triggers';
 import {
     beginPipelineRun,
@@ -59,6 +61,37 @@ interface PipelineEventData {
     trigger?: string;
     replayOfRunId?: string | null;
 }
+
+const ClusterProductTypeSchema = z.enum(['pdf_guide', 'mini_course', 'challenge_7day', 'checklist_toolkit']);
+
+const ClusterResultSchema = z.object({
+    label: z.string().min(1),
+    videoIds: z.array(z.string().min(1)).default([]),
+    summary: z.string().default(''),
+    productType: ClusterProductTypeSchema.default('pdf_guide'),
+    confidence: z.number().min(0).max(1).default(0.5),
+});
+
+const ClusterResultsSchema = z.array(ClusterResultSchema).default([]);
+
+const VoiceBrandSchema = z.object({
+    voiceProfile: z.object({
+        tone: z.string().optional(),
+        vocabulary: z.string().optional(),
+        speakingStyle: z.string().optional(),
+        catchphrases: z.array(z.string()).optional(),
+        personality: z.string().optional(),
+        contentFocus: z.string().optional(),
+    }).passthrough(),
+    brandTokens: z.object({
+        primaryColor: z.string().optional(),
+        secondaryColor: z.string().optional(),
+        backgroundColor: z.string().optional(),
+        textColor: z.string().optional(),
+        fontFamily: z.string().optional(),
+        mood: z.string().optional(),
+    }).passthrough(),
+});
 
 function normalizeTrigger(trigger: string): PipelineTrigger {
     if (trigger === 'onboarding') return 'onboarding';
@@ -487,19 +520,35 @@ export const scrapePipeline = inngest.createFunction(
 
                 try {
                     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-                    const response = await anthropic.messages.create({
+                    const response = await anthropic.messages.parse({
                         model: 'claude-haiku-4-5-20241022',
                         max_tokens: 2048,
                         system: `You are a content analyst. Given a list of video titles and transcript snippets, group them into 3-7 topic clusters. For each cluster, provide a label, summary, list of video IDs, recommended product type (pdf_guide, mini_course, challenge_7day, or checklist_toolkit), and confidence score (0-1).\n\nOutput ONLY valid JSON array, no markdown:\n[{"label":"...","videoIds":["..."],"summary":"...","productType":"...","confidence":0.8}]`,
                         messages: [{ role: 'user', content: JSON.stringify(videoSummaries) }],
+                        output_config: {
+                            format: zodOutputFormat(ClusterResultsSchema),
+                        },
                     });
 
-                    const text = response.content
-                        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-                        .map((b) => b.text)
-                        .join('');
-                    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-                    clusters = JSON.parse(jsonStr);
+                    const parsedClusters = response.parsed_output;
+                    if (!parsedClusters || parsedClusters.length === 0) {
+                        throw new Error('AI clustering returned empty structured output');
+                    }
+
+                    const allowedVideoIds = new Set(videoSummaries.map((video) => video.id));
+                    clusters = parsedClusters
+                        .map((cluster) => ({
+                            label: cluster.label.trim(),
+                            videoIds: cluster.videoIds.filter((videoId) => allowedVideoIds.has(videoId)),
+                            summary: cluster.summary,
+                            productType: cluster.productType,
+                            confidence: cluster.confidence,
+                        }))
+                        .filter((cluster) => cluster.label.length > 0 && cluster.videoIds.length > 0);
+
+                    if (clusters.length === 0) {
+                        throw new Error('AI clustering returned no valid clusters after filtering.');
+                    }
                 } catch (err) {
                     log.error('AI clustering failed, falling back to keyword matching', {
                         error: err instanceof Error ? err.message : 'Unknown',
@@ -592,7 +641,7 @@ export const scrapePipeline = inngest.createFunction(
 
                 try {
                     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-                    const response = await anthropic.messages.create({
+                    const response = await anthropic.messages.parse({
                         model: 'claude-haiku-4-5-20241022',
                         max_tokens: 1024,
                         system: `Analyze these video transcripts from a social media creator and extract:
@@ -601,14 +650,16 @@ export const scrapePipeline = inngest.createFunction(
 
 Output ONLY valid JSON:\n{"voiceProfile":{"tone":"...","vocabulary":"simple|intermediate|advanced","speakingStyle":"...","catchphrases":["..."],"personality":"...","contentFocus":"..."},"brandTokens":{"primaryColor":"#hex","secondaryColor":"#hex","backgroundColor":"#hex","textColor":"#hex","fontFamily":"inter|outfit|roboto|playfair","mood":"clean|fresh|bold|premium|energetic"}}`,
                         messages: [{ role: 'user', content: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}` }],
+                        output_config: {
+                            format: zodOutputFormat(VoiceBrandSchema),
+                        },
                     });
 
-                    const text = response.content
-                        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-                        .map((b) => b.text)
-                        .join('');
-                    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-                    const parsed = JSON.parse(jsonStr);
+                    const parsed = response.parsed_output;
+                    if (!parsed) {
+                        throw new Error('AI voice/brand extraction returned empty structured output');
+                    }
+
                     voiceProfile = {
                         ...parsed.voiceProfile,
                         total_words: transcriptRows.reduce((sum, r) => sum + r.transcript_text.split(/\s+/).length, 0),
