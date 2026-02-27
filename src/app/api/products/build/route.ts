@@ -258,6 +258,38 @@ interface TranscriptChunkRow {
     chunk_index: number;
 }
 
+interface TopicClusterRow {
+    label: string | null;
+    video_count: number | null;
+    confidence_score: number | null;
+    total_views: number | null;
+    video_ids: string[] | null;
+}
+
+interface TopicSuggestionRow {
+    topic: string;
+    videoCount: number;
+}
+
+const TOPIC_STOPWORDS = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'build', 'create', 'course',
+    'content', 'day', 'for', 'from', 'get', 'guide', 'has', 'have', 'how', 'in', 'into', 'is',
+    'it', 'its', 'lesson', 'make', 'mini', 'my', 'now', 'of', 'on', 'or', 'our', 'pdf', 'real',
+    'that', 'the', 'their', 'them', 'they', 'this', 'to', 'toolkit', 'video', 'videos', 'what',
+    'with', 'your',
+]);
+
+const TOPIC_GENERIC_SINGLE_WORDS = new Set([
+    'content', 'course', 'create', 'guide', 'lesson', 'make', 'official', 'real', 'time', 'video',
+]);
+
+const TOPIC_GENERIC_LABELS = new Set([
+    'general',
+    'general content',
+    'misc',
+    'miscellaneous',
+]);
+
 function normalizeWhitespace(value: string | null | undefined, maxLen = 160): string | null {
     if (!value) return null;
     const cleaned = value.replace(/\s+/g, ' ').trim();
@@ -286,6 +318,226 @@ function tokenizeQuery(query: string): string[] {
         .split(/[^a-z0-9]+/)
         .map((token) => token.trim())
         .filter((token) => token.length >= 3);
+}
+
+function titleCaseTopic(topic: string): string {
+    return topic
+        .split(' ')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function buildCreatorNoiseTokens(creator: { handle?: string | null; display_name?: string | null }): Set<string> {
+    const source = `${creator.handle || ''} ${creator.display_name || ''}`
+        .toLowerCase()
+        .replace(/[#@]/g, ' ');
+
+    const tokens = source
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3);
+
+    const output = new Set<string>(tokens);
+
+    const compactHandle = (creator.handle || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+    if (compactHandle.length >= 4) output.add(compactHandle);
+
+    // Common creator handle suffixes tend to be metadata, not topic signals.
+    const suffixes = ['official', 'real', 'tv', 'channel'];
+    for (const suffix of suffixes) {
+        if (compactHandle.endsWith(suffix)) {
+            const stripped = compactHandle.slice(0, compactHandle.length - suffix.length);
+            if (stripped.length >= 4) output.add(stripped);
+        }
+    }
+
+    const displayTokens = (creator.display_name || '')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2);
+    if (displayTokens.length >= 2) {
+        output.add(displayTokens.join(''));
+        for (let i = 0; i < displayTokens.length - 1; i++) {
+            const pair = `${displayTokens[i]}${displayTokens[i + 1]}`;
+            if (pair.length >= 4) output.add(pair);
+        }
+    }
+
+    return output;
+}
+
+function normalizeTopicPhrase(input: string, creatorNoise: Set<string>): string | null {
+    const tokens = input
+        .toLowerCase()
+        .replace(/[#@]/g, ' ')
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) =>
+            token.length >= 3
+            && !/^\d+$/.test(token)
+            && !TOPIC_STOPWORDS.has(token)
+            && !creatorNoise.has(token)
+        );
+
+    if (tokens.length === 0) return null;
+    if (tokens.length === 1 && TOPIC_GENERIC_SINGLE_WORDS.has(tokens[0])) return null;
+
+    return tokens.slice(0, 5).join(' ');
+}
+
+function deriveTopicPhrasesFromText(text: string, creatorNoise: Set<string>): string[] {
+    const tokens = text
+        .toLowerCase()
+        .replace(/[#@]/g, ' ')
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) =>
+            token.length >= 3
+            && !/^\d+$/.test(token)
+            && !TOPIC_STOPWORDS.has(token)
+            && !creatorNoise.has(token)
+        );
+
+    const phrases: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+        const unigram = normalizeTopicPhrase(tokens[i], creatorNoise);
+        if (unigram) phrases.push(unigram);
+
+        if (i + 1 < tokens.length) {
+            const bigram = normalizeTopicPhrase(`${tokens[i]} ${tokens[i + 1]}`, creatorNoise);
+            if (bigram) phrases.push(bigram);
+        }
+
+        if (i + 2 < tokens.length) {
+            const trigram = normalizeTopicPhrase(`${tokens[i]} ${tokens[i + 1]} ${tokens[i + 2]}`, creatorNoise);
+            if (trigram) phrases.push(trigram);
+        }
+    }
+
+    return phrases;
+}
+
+function buildTopicSuggestions(input: {
+    searchResults: Array<{ videoId: string; title: string | null; clipCard: Record<string, unknown> | null; score: number }>;
+    clusterRows: TopicClusterRow[];
+    creator: { handle?: string | null; display_name?: string | null };
+}): TopicSuggestionRow[] {
+    const creatorNoise = buildCreatorNoiseTokens(input.creator);
+    const searchVideoIds = new Set(input.searchResults.map((result) => result.videoId));
+    const topicMap = new Map<string, { score: number; videoIds: Set<string>; inferredCoverage: number }>();
+
+    const pushTopic = (topic: string | null, videoId: string | null, weight: number, inferredCoverage = 0) => {
+        if (!topic) return;
+        if (TOPIC_GENERIC_LABELS.has(topic)) return;
+        const existing = topicMap.get(topic) || { score: 0, videoIds: new Set<string>(), inferredCoverage: 0 };
+        existing.score += weight;
+        if (videoId) existing.videoIds.add(videoId);
+        existing.inferredCoverage = Math.max(existing.inferredCoverage, inferredCoverage);
+        topicMap.set(topic, existing);
+    };
+
+    for (const cluster of input.clusterRows) {
+        const normalized = normalizeTopicPhrase(cluster.label || '', creatorNoise);
+        if (!normalized || TOPIC_GENERIC_LABELS.has(normalized)) continue;
+        const confidence = Math.max(0, Number(cluster.confidence_score || 0));
+        const videoCount = Math.max(0, Number(cluster.video_count || 0));
+        const relatedVideoIds = Array.isArray(cluster.video_ids)
+            ? cluster.video_ids.filter((videoId) => searchVideoIds.has(videoId))
+            : [];
+        const coverage = relatedVideoIds.length;
+        if (coverage === 0) continue;
+        const clusterWeight = 1.4 + confidence + Math.min(videoCount, 8) * 0.12;
+        pushTopic(normalized, null, clusterWeight, coverage);
+    }
+
+    for (const result of input.searchResults) {
+        const card = (result.clipCard || {}) as Record<string, unknown>;
+        const tags = Array.isArray(card.topicTags) ? card.topicTags : [];
+        for (const tag of tags) {
+            const normalized = normalizeTopicPhrase(String(tag || ''), creatorNoise);
+            if (!normalized) continue;
+            const weight = normalized.split(' ').length >= 2 ? 1.2 : 0.45;
+            pushTopic(normalized, result.videoId, weight);
+        }
+
+        const phraseSource = [
+            result.title || '',
+            typeof card.bestHook === 'string' ? card.bestHook : '',
+            typeof card.outcome === 'string' ? card.outcome : '',
+            typeof card.whoItsFor === 'string' ? card.whoItsFor : '',
+        ].join(' ');
+
+        const phrases = deriveTopicPhrasesFromText(phraseSource, creatorNoise);
+        for (const phrase of phrases) {
+            const lengthBoost = phrase.split(' ').length >= 2 ? 0.35 : 0;
+            pushTopic(phrase, result.videoId, 0.7 + lengthBoost);
+        }
+    }
+
+    const ranked = Array.from(topicMap.entries())
+        .map(([topic, data]) => ({
+            topic,
+            score: data.score + Math.max(data.videoIds.size, data.inferredCoverage) * 1.8,
+            videoCount: Math.max(data.videoIds.size, data.inferredCoverage),
+        }))
+        .filter((entry) => entry.videoCount > 0 && !TOPIC_GENERIC_LABELS.has(entry.topic))
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            if (b.videoCount !== a.videoCount) return b.videoCount - a.videoCount;
+            return b.topic.split(' ').length - a.topic.split(' ').length;
+        });
+
+    const dedupedMultiWordStrong: TopicSuggestionRow[] = [];
+    const dedupedMultiWordWeak: TopicSuggestionRow[] = [];
+    const dedupedSingleWordStrong: TopicSuggestionRow[] = [];
+    const dedupedSingleWordWeak: TopicSuggestionRow[] = [];
+    const seen = new Set<string>();
+    for (const entry of ranked) {
+        if (seen.has(entry.topic)) continue;
+        seen.add(entry.topic);
+        const row = {
+            topic: titleCaseTopic(entry.topic),
+            videoCount: entry.videoCount,
+        };
+        const isStrong = entry.videoCount >= 2;
+        if (entry.topic.includes(' ')) {
+            if (isStrong) dedupedMultiWordStrong.push(row);
+            else dedupedMultiWordWeak.push(row);
+        } else if (isStrong) {
+            dedupedSingleWordStrong.push(row);
+        } else {
+            dedupedSingleWordWeak.push(row);
+        }
+    }
+
+    const deduped: TopicSuggestionRow[] = [];
+    for (const row of dedupedMultiWordStrong) {
+        deduped.push(row);
+        if (deduped.length >= 6) break;
+    }
+    if (deduped.length < 6) {
+        for (const row of dedupedMultiWordWeak) {
+            deduped.push(row);
+            if (deduped.length >= 6) break;
+        }
+    }
+    if (deduped.length < 6) {
+        for (const row of dedupedSingleWordStrong) {
+            deduped.push(row);
+            if (deduped.length >= 6) break;
+        }
+    }
+    if (deduped.length < 6) {
+        for (const row of dedupedSingleWordWeak) {
+            deduped.push(row);
+            if (deduped.length >= 6) break;
+        }
+    }
+
+    return deduped;
 }
 
 function scoreTextMatch(text: string, tokens: string[]): number {
@@ -552,22 +804,21 @@ export async function POST(request: Request) {
 
                 // If prompt is vague, suggest topics
                 if (isVague && !body.confirmedTopic) {
-                    // Extract topic clusters from clip cards
-                    const topicCounts = new Map<string, number>();
-                    for (const result of searchResults) {
-                        const card = result.clipCard as Record<string, unknown> | null;
-                        if (card?.topicTags && Array.isArray(card.topicTags)) {
-                            for (const tag of card.topicTags as string[]) {
-                                topicCounts.set(tag, (topicCounts.get(tag) || 0) + 1);
-                            }
-                        }
-                    }
+                    const { data: clusterRows } = await db
+                        .from('content_clusters')
+                        .select('label, video_count, confidence_score, total_views, video_ids')
+                        .eq('creator_id', creator.id)
+                        .order('total_views', { ascending: false })
+                        .limit(8);
 
-                    // Sort by frequency, take top 6
-                    const topTopics = Array.from(topicCounts.entries())
-                        .sort((a, b) => b[1] - a[1])
-                        .slice(0, 6)
-                        .map(([topic, count]) => ({ topic, videoCount: count }));
+                    const topTopics = buildTopicSuggestions({
+                        searchResults,
+                        clusterRows: (clusterRows || []) as TopicClusterRow[],
+                        creator: {
+                            handle: creator.handle,
+                            display_name: creator.display_name,
+                        },
+                    });
 
                     if (topTopics.length > 0) {
                         send({

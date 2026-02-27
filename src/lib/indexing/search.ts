@@ -19,6 +19,13 @@ interface TranscriptFallbackRow {
     transcript_text: string;
 }
 
+const FALLBACK_TOPIC_STOPWORDS = new Set([
+    'about', 'after', 'also', 'and', 'are', 'because', 'been', 'being', 'build', 'check', 'content',
+    'create', 'from', 'guide', 'have', 'into', 'just', 'lesson', 'like', 'make', 'more', 'only',
+    'that', 'their', 'there', 'these', 'this', 'tips', 'toolkit', 'video', 'what', 'when', 'with',
+    'your',
+]);
+
 function tokenizeQuery(query: string): string[] {
     return query
         .toLowerCase()
@@ -28,19 +35,54 @@ function tokenizeQuery(query: string): string[] {
 }
 
 function deriveFallbackTags(row: TranscriptFallbackRow): string[] {
-    const source = `${row.title || ''} ${row.description || ''}`
+    const source = `${row.title || ''} ${row.description || ''} ${(row.transcript_text || '').slice(0, 220)}`
         .toLowerCase()
+        .replace(/[#@]/g, ' ')
         .split(/[^a-z0-9]+/)
         .map((token) => token.trim())
-        .filter((token) => token.length >= 4);
+        .filter((token) =>
+            token.length >= 3
+            && !/^\d+$/.test(token)
+            && !FALLBACK_TOPIC_STOPWORDS.has(token)
+        );
 
-    const unique: string[] = [];
-    for (const token of source) {
-        if (unique.includes(token)) continue;
-        unique.push(token);
-        if (unique.length >= 6) break;
+    const phraseScores = new Map<string, number>();
+    const push = (phrase: string, weight: number) => {
+        const current = phraseScores.get(phrase) || 0;
+        phraseScores.set(phrase, current + weight);
+    };
+
+    for (let i = 0; i < source.length; i++) {
+        const unigram = source[i];
+        if (unigram.length >= 4) push(unigram, 0.8);
+
+        if (i + 1 < source.length) {
+            const bigram = `${source[i]} ${source[i + 1]}`;
+            push(bigram, 1.6);
+        }
+
+        if (i + 2 < source.length) {
+            const trigram = `${source[i]} ${source[i + 1]} ${source[i + 2]}`;
+            push(trigram, 2.0);
+        }
     }
-    return unique;
+
+    const ranked = Array.from(phraseScores.entries())
+        .sort((a, b) => {
+            if (b[1] !== a[1]) return b[1] - a[1];
+            return b[0].split(' ').length - a[0].split(' ').length;
+        });
+
+    const output: string[] = [];
+    const seen = new Set<string>();
+    for (const [phrase] of ranked) {
+        if (seen.has(phrase)) continue;
+        seen.add(phrase);
+        output.push(phrase);
+        if (output.length >= 6) break;
+    }
+
+    return output;
 }
 
 function scoreTranscriptMatch(
