@@ -2,7 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import LivePreview from './LivePreview';
-import { getApiErrorMessage, readJsonSafe } from '@/lib/utils';
+import { cn, getApiErrorMessage, readJsonSafe } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
 
 interface ProductBuilderProps {
     creatorId: string;
@@ -440,616 +444,229 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     }, [creatorId]);
 
     return (
-        <div className="builder-root">
-            <style>{`
-                .builder-root {
-                    --line: #e2e8f0;
-                    --text: #0f172a;
-                    --muted: #64748b;
-                    position: relative;
-                    flex: 1;
-                    display: flex;
-                    flex-direction: column;
-                    min-height: 0;
-                    color: var(--text);
-                    background: #ffffff;
-                }
-                .builder-content {
-                    display: flex;
-                    flex: 1;
-                    min-height: 0;
-                    flex-direction: column;
-                }
-                .builder-top {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    gap: 1rem;
-                    padding: 0.75rem 1rem;
-                    border-bottom: 1px solid var(--line);
-                    background: #ffffff;
-                }
-                .builder-title {
-                    font-size: 0.82rem;
-                    font-weight: 600;
-                    color: #334155;
-                }
-                .builder-top-right {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                }
-                .builder-phase-badge {
-                    border: 1px solid #cbd5e1;
-                    background: #f8fafc;
-                    color: #475569;
-                    border-radius: 999px;
-                    padding: 0.2rem 0.5rem;
-                    font-size: 0.58rem;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    font-weight: 600;
-                }
-                .builder-stop {
-                    border: 1px solid #fca5a5;
-                    background: #fef2f2;
-                    color: #b91c1c;
-                    border-radius: 999px;
-                    padding: 0.3rem 0.7rem;
-                    font-size: 0.66rem;
-                    font-weight: 600;
-                    cursor: pointer;
-                }
-                .builder-welcome {
-                    flex: 1;
-                    min-height: 0;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: center;
-                    align-items: center;
-                    padding: 1.6rem 1rem 1rem;
-                    gap: 1rem;
-                }
-                .builder-welcome-card {
-                    width: min(820px, 100%);
-                    border-radius: 1rem;
-                    border: 1px solid var(--line);
-                    background: #ffffff;
-                    box-shadow: none;
-                    padding: 1.2rem;
-                }
-                .builder-welcome-headline {
-                    font-size: clamp(1.15rem, 1.9vw, 1.55rem);
-                    line-height: 1.2;
-                    letter-spacing: -0.01em;
-                    margin: 0;
-                    color: #0f172a;
-                }
-                .builder-welcome-copy {
-                    margin: 0.55rem 0 0;
-                    color: var(--muted);
-                    max-width: 52ch;
-                    line-height: 1.5;
-                    font-size: 0.86rem;
-                }
-                .builder-suggestion-grid {
-                    margin-top: 1rem;
-                    display: grid;
-                    grid-template-columns: repeat(2, minmax(0, 1fr));
-                    gap: 0.5rem;
-                }
-                .builder-suggestion {
-                    border: 1px solid var(--line);
-                    border-radius: 0.75rem;
-                    background: #ffffff;
-                    color: #334155;
-                    text-align: center;
-                    display: block;
-                    padding: 0.65rem 0.75rem;
-                    font-size: 0.76rem;
-                    cursor: pointer;
-                    transition: border-color 0.2s ease, background 0.2s ease;
-                    font-family: inherit;
-                }
-                .builder-suggestion:hover {
-                    border-color: #94a3b8;
-                    background: #f8fafc;
-                }
-                .builder-layout {
-                    flex: 1;
-                    min-height: 0;
-                    display: flex;
-                    gap: 0;
-                }
-                .builder-chat {
-                    width: min(360px, 44%);
-                    border-right: 1px solid var(--line);
-                    display: flex;
-                    flex-direction: column;
-                    min-height: 0;
-                    background: #fafafa;
-                }
-                .builder-chat-header {
-                    padding: 0.7rem 0.85rem;
-                    border-bottom: 1px solid var(--line);
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 0.6rem;
-                    background: #ffffff;
-                }
-                .builder-chat-status {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    font-size: 0.68rem;
-                    font-weight: 600;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    color: var(--muted);
-                }
-                .builder-chat-dot {
-                    width: 6px;
-                    height: 6px;
-                    border-radius: 50%;
-                    background: #94a3b8;
-                }
-                .builder-chat-dot.live {
-                    background: #0f172a;
-                    animation: pulseDot 1.3s ease-in-out infinite;
-                }
-                @keyframes pulseDot {
-                    0%, 100% { transform: scale(1); opacity: 1; }
-                    50% { transform: scale(0.8); opacity: 0.55; }
-                }
-                .builder-chat-messages {
-                    flex: 1;
-                    min-height: 0;
-                    overflow-y: auto;
-                    padding: 0.75rem;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 0.5rem;
-                }
-                .builder-msg-wrap {
-                    display: flex;
-                }
-                .builder-msg {
-                    border-radius: 0.75rem;
-                    border: 1px solid transparent;
-                    padding: 0.52rem 0.66rem;
-                    font-size: 0.78rem;
-                    line-height: 1.5;
-                    max-width: 95%;
-                }
-                .builder-msg.user {
-                    align-self: flex-end;
-                    background: #0f172a;
-                    color: #ffffff;
-                    border-bottom-right-radius: 0.25rem;
-                    border-color: #0f172a;
-                }
-                .builder-msg.assistant {
-                    align-self: flex-start;
-                    background: #ffffff;
-                    border-color: #e2e8f0;
-                    color: #0f172a;
-                    border-bottom-left-radius: 0.25rem;
-                }
-                .builder-msg.status {
-                    align-self: center;
-                    background: #f8fafc;
-                    border-color: #cbd5e1;
-                    color: #475569;
-                    max-width: 100%;
-                    font-size: 0.7rem;
-                    letter-spacing: 0.02em;
-                }
-                .builder-topic-chips {
-                    margin-top: 0.35rem;
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 0.35rem;
-                }
-                .builder-topic-chip {
-                    border: 1px solid #cbd5e1;
-                    background: #f8fafc;
-                    color: #334155;
-                    border-radius: 999px;
-                    padding: 0.3rem 0.58rem;
-                    font-size: 0.66rem;
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 0.3rem;
-                    cursor: pointer;
-                    font-family: inherit;
-                    transition: all 0.2s ease;
-                }
-                .builder-topic-chip:hover {
-                    background: #f1f5f9;
-                    border-color: #94a3b8;
-                }
-                .builder-topic-chip:disabled {
-                    opacity: 0.55;
-                    cursor: not-allowed;
-                }
-                .builder-topic-count {
-                    border-radius: 999px;
-                    padding: 0.1rem 0.4rem;
-                    font-size: 0.58rem;
-                    background: #e2e8f0;
-                    color: #475569;
-                }
-                .builder-preview {
-                    flex: 1;
-                    min-width: 0;
-                    display: flex;
-                    flex-direction: column;
-                    min-height: 0;
-                    background: #ffffff;
-                }
-                .builder-preview-header {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 0.7rem 0.85rem;
-                    border-bottom: 1px solid var(--line);
-                    background: #ffffff;
-                }
-                .builder-preview-label {
-                    font-size: 0.68rem;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    color: var(--muted);
-                    font-weight: 600;
-                }
-                .builder-preview-badge {
-                    border: 1px solid #cbd5e1;
-                    background: #f8fafc;
-                    color: #475569;
-                    border-radius: 999px;
-                    padding: 0.22rem 0.5rem;
-                    font-size: 0.58rem;
-                    letter-spacing: 0.09em;
-                    text-transform: uppercase;
-                }
-                .builder-preview-body {
-                    flex: 1;
-                    min-height: 0;
-                    padding: 0.6rem;
-                }
-                .builder-composer {
-                    display: flex;
-                    gap: 0.6rem;
-                    align-items: center;
-                    padding: 0.7rem 0.85rem;
-                    border-top: 1px solid var(--line);
-                    background: #ffffff;
-                }
-                .builder-input {
-                    flex: 1;
-                    min-width: 0;
-                    border: 1px solid #cbd5e1;
-                    background: #ffffff;
-                    color: #0f172a;
-                    border-radius: 999px;
-                    padding: 0.65rem 0.9rem;
-                    font-size: 0.82rem;
-                    outline: none;
-                    font-family: inherit;
-                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-                }
-                .builder-input:focus {
-                    border-color: #0f172a;
-                    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
-                }
-                .builder-input::placeholder {
-                    color: #94a3b8;
-                }
-                .builder-send {
-                    border: 1px solid #0f172a;
-                    height: 38px;
-                    border-radius: 999px;
-                    padding: 0 0.9rem;
-                    font-size: 0.76rem;
-                    font-weight: 600;
-                    color: #ffffff;
-                    background: #0f172a;
-                    cursor: pointer;
-                    transition: background 0.2s ease;
-                    flex-shrink: 0;
-                }
-                .builder-send:hover {
-                    background: #1e293b;
-                }
-                .builder-send:disabled {
-                    opacity: 0.4;
-                    cursor: not-allowed;
-                }
-                .builder-error {
-                    margin: 0 0.85rem;
-                    margin-top: 0.3rem;
-                    color: #b91c1c;
-                    font-size: 0.7rem;
-                }
-                .builder-preview-actions {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.4rem;
-                }
-                .builder-action-btn {
-                    border: 1px solid #cbd5e1;
-                    background: #ffffff;
-                    color: #334155;
-                    border-radius: 999px;
-                    padding: 0.3rem 0.7rem;
-                    font-size: 0.66rem;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: background 0.2s ease;
-                    font-family: inherit;
-                }
-                .builder-action-btn:hover {
-                    background: #f8fafc;
-                }
-                .builder-action-btn:disabled {
-                    opacity: 0.4;
-                    cursor: not-allowed;
-                }
-                .builder-action-btn.publish {
-                    border-color: #86efac;
-                    background: #f0fdf4;
-                    color: #15803d;
-                }
-                .builder-action-btn.publish:hover {
-                    background: #dcfce7;
-                }
-                .builder-action-btn.published {
-                    border-color: #86efac;
-                    background: #f0fdf4;
-                    color: #15803d;
-                    cursor: default;
-                }
-                .builder-action-btn.undo {
-                    border-color: #fcd34d;
-                    background: #fffbeb;
-                    color: #92400e;
-                }
-                .builder-action-btn.undo:hover {
-                    background: #fef3c7;
-                }
-                .builder-clear-btn {
-                    border: 1px solid #cbd5e1;
-                    background: transparent;
-                    color: #64748b;
-                    border-radius: 999px;
-                    padding: 0.3rem 0.6rem;
-                    font-size: 0.6rem;
-                    cursor: pointer;
-                    transition: background 0.2s ease;
-                    font-family: inherit;
-                }
-                .builder-clear-btn:hover {
-                    background: #f8fafc;
-                    color: #334155;
-                }
-                .builder-preview-iframe-wrap {
-                    width: 100%;
-                    height: 100%;
-                    display: flex;
-                    justify-content: center;
-                }
-                @media (max-width: 1024px) {
-                    .builder-chat {
-                        width: min(330px, 48%);
-                    }
-                }
-                @media (max-width: 860px) {
-                    .builder-layout {
-                        flex-direction: column;
-                    }
-                    .builder-chat {
-                        width: 100%;
-                        border-right: none;
-                        border-bottom: 1px solid var(--line);
-                        min-height: 44vh;
-                    }
-                    .builder-preview {
-                        min-height: 38vh;
-                    }
-                    .builder-suggestion-grid {
-                        grid-template-columns: 1fr;
-                    }
-                }
-            `}</style>
-
-            <div className="builder-content">
-                <div className="builder-top">
-                    <span className="builder-title">Building with {displayName}&apos;s content</span>
-                    <div className="builder-top-right">
-                        {buildState.phase && <span className="builder-phase-badge">{normalizePhase(buildState.phase)}</span>}
-                        {buildState.isBuilding && (
-                            <button type="button" className="builder-stop" onClick={stopActiveBuild}>
-                                Stop
-                            </button>
-                        )}
-                    </div>
+        <div className="flex h-full min-h-0 flex-col bg-white">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2.5 sm:px-4">
+                <p className="text-xs font-medium text-slate-600">Building with {displayName}&apos;s content</p>
+                <div className="flex items-center gap-2">
+                    {buildState.phase && (
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em] text-slate-600">
+                            {normalizePhase(buildState.phase)}
+                        </Badge>
+                    )}
+                    {buildState.isBuilding && (
+                        <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            className="border-red-200 text-red-700 hover:bg-red-50"
+                            onClick={stopActiveBuild}
+                        >
+                            Stop
+                        </Button>
+                    )}
                 </div>
+            </div>
 
-                {showWelcome ? (
-                    <>
-                        <div className="builder-welcome">
-                            <div className="builder-welcome-card">
-                                <h2 className="builder-welcome-headline">Design a sellable product from your creator voice</h2>
-                                <p className="builder-welcome-copy">
-                                    Pick a format to start, then refine it with simple instructions.
-                                </p>
-                                <div className="builder-suggestion-grid">
+            {showWelcome ? (
+                <>
+                    <div className="flex min-h-0 flex-1 items-center justify-center p-3 sm:p-4">
+                        <Card className="w-full max-w-3xl border-slate-200 bg-white py-0 shadow-none">
+                            <CardContent className="space-y-4 px-4 py-5 sm:px-6">
+                                <div>
+                                    <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+                                        Design a sellable product from your creator voice
+                                    </h2>
+                                    <p className="mt-2 text-sm text-slate-600">
+                                        Pick a format to start, then refine it with simple instructions.
+                                    </p>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                     {SUGGESTIONS.map((suggestion) => (
-                                        <button
+                                        <Button
                                             key={suggestion.label}
                                             type="button"
-                                            className="builder-suggestion"
+                                            variant="outline"
+                                            className="h-10 justify-center text-xs text-slate-700"
                                             onClick={() => handleSubmit(suggestion.label)}
                                         >
                                             {suggestion.label}
-                                        </button>
+                                        </Button>
                                     ))}
                                 </div>
-                            </div>
-                        </div>
+                            </CardContent>
+                        </Card>
+                    </div>
 
-                        <form
-                            className="builder-composer"
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                void handleSubmit();
-                            }}
-                        >
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                placeholder="Describe what you want to create..."
-                                className="builder-input"
-                            />
-                            <button type="submit" className="builder-send" disabled={!input.trim()}>
-                                Send
-                            </button>
-                        </form>
-                        {composerError && <div className="builder-error">{composerError}</div>}
-                    </>
-                ) : (
-                    <>
-                        <div className="builder-layout">
-                            <div className="builder-chat">
-                                <div className="builder-chat-header">
-                                    <div className="builder-chat-status">
-                                        <span className={`builder-chat-dot ${buildState.isBuilding ? 'live' : ''}`} />
-                                        <span>
-                                            {buildState.isBuilding
-                                                ? 'Generating'
-                                                : buildState.productId
-                                                    ? 'Draft ready'
-                                                    : 'Assistant'}
-                                            </span>
-                                    </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        {messages.length > 0 && (
-                                            <button type="button" className="builder-clear-btn" onClick={handleClearChat}>
-                                                Clear
-                                            </button>
+                    <form
+                        className="flex items-center gap-2 border-t border-slate-200 bg-white px-3 py-2.5 sm:px-4"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleSubmit();
+                        }}
+                    >
+                        <Input
+                            ref={inputRef}
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Describe what you want to create..."
+                            className="h-9 text-sm"
+                        />
+                        <Button type="submit" size="sm" className="h-9 px-4" disabled={!input.trim()}>
+                            Send
+                        </Button>
+                    </form>
+                    {composerError && <p className="px-4 pb-2 text-xs text-red-700">{composerError}</p>}
+                </>
+            ) : (
+                <>
+                    <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+                        <section className="flex min-h-[42vh] min-w-0 flex-col border-b border-slate-200 bg-slate-50/70 lg:min-h-0 lg:w-[38%] lg:max-w-[380px] lg:border-b-0 lg:border-r">
+                            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 sm:px-3.5">
+                                <div className="flex items-center gap-2">
+                                    <span
+                                        className={cn(
+                                            'h-1.5 w-1.5 rounded-full bg-slate-400',
+                                            buildState.isBuilding && 'animate-pulse bg-slate-900'
                                         )}
-                                    </div>
+                                    />
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">
+                                        {buildState.isBuilding ? 'Generating' : buildState.productId ? 'Draft ready' : 'Assistant'}
+                                    </p>
                                 </div>
+                                {messages.length > 0 && (
+                                    <Button type="button" size="xs" variant="ghost" onClick={handleClearChat}>
+                                        Clear
+                                    </Button>
+                                )}
+                            </div>
 
-                                <div className="builder-chat-messages">
-                                    {messages.map((msg) => {
-                                        const cleanContent = sanitizeMessageText(msg.content);
-                                        const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
-                                        return (
-                                            <div key={msg.id} className={`builder-msg-wrap ${msg.role === 'user' ? 'user' : ''}`}>
-                                                <div className={`builder-msg ${msg.role}`}>
-                                                    {lines.length === 0 ? cleanContent : lines.map((line, idx) => (
-                                                        <p key={`${msg.id}-${idx}`} style={{ margin: idx === lines.length - 1 ? 0 : '0 0 0.35rem 0' }}>
+                            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+                                {messages.map((msg) => {
+                                    const cleanContent = sanitizeMessageText(msg.content);
+                                    const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
+                                    return (
+                                        <div key={msg.id} className="space-y-1">
+                                            <div
+                                                className={cn(
+                                                    'max-w-[92%] rounded-lg border px-3 py-2 text-[13px] leading-5',
+                                                    msg.role === 'user' && 'ml-auto rounded-br-sm border-slate-900 bg-slate-900 text-white',
+                                                    msg.role === 'assistant' && 'mr-auto rounded-bl-sm border-slate-200 bg-white text-slate-900',
+                                                    msg.role === 'status' && 'mx-auto border-slate-300 bg-slate-100 text-slate-600'
+                                                )}
+                                            >
+                                                {lines.length === 0
+                                                    ? cleanContent
+                                                    : lines.map((line, idx) => (
+                                                        <p key={`${msg.id}-${idx}`} className={idx === lines.length - 1 ? '' : 'mb-1.5'}>
                                                             {line}
                                                         </p>
                                                     ))}
-                                                </div>
-                                                {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
-                                                    <div className="builder-topic-chips">
-                                                        {msg.topicSuggestions.map((topic) => (
-                                                            <button
-                                                                key={topic.topic}
-                                                                type="button"
-                                                                className="builder-topic-chip"
-                                                                onClick={() => handleTopicSelect(topic.topic)}
-                                                                disabled={buildState.isBuilding}
-                                                            >
-                                                                <span>{topic.topic}</span>
-                                                                <span className="builder-topic-count">{topic.videoCount}</span>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
                                             </div>
-                                        );
-                                    })}
-                                    <div ref={messagesEndRef} />
+
+                                            {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {msg.topicSuggestions.map((topic) => (
+                                                        <Button
+                                                            key={topic.topic}
+                                                            type="button"
+                                                            size="xs"
+                                                            variant="outline"
+                                                            className="h-6 rounded-full border-slate-300 bg-white px-2.5 text-[11px] text-slate-700"
+                                                            onClick={() => handleTopicSelect(topic.topic)}
+                                                            disabled={buildState.isBuilding}
+                                                        >
+                                                            {topic.topic}
+                                                            <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                                                                {topic.videoCount}
+                                                            </Badge>
+                                                        </Button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                <div ref={messagesEndRef} />
+                            </div>
+                        </section>
+
+                        <section className="flex min-h-[38vh] min-w-0 flex-1 flex-col bg-white lg:min-h-0">
+                            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 sm:px-3.5">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">Preview</p>
+                                <div className="flex items-center gap-1.5">
+                                    {versionHistory.length > 0 && (
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            variant="outline"
+                                            className="border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                            onClick={handleUndo}
+                                            disabled={buildState.isBuilding}
+                                        >
+                                            Undo
+                                        </Button>
+                                    )}
+
+                                    {buildState.productId && publishStatus !== 'published' && (
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            onClick={() => void handlePublish()}
+                                            disabled={buildState.isBuilding || publishStatus === 'publishing'}
+                                        >
+                                            {publishStatus === 'publishing' ? 'Publishing...' : 'Publish'}
+                                        </Button>
+                                    )}
+
+                                    {publishStatus === 'published' && (
+                                        <Badge variant="secondary" className="text-[10px] uppercase tracking-[0.08em]">
+                                            Live
+                                        </Badge>
+                                    )}
+
+                                    <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em] text-slate-600">
+                                        {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
+                                    </Badge>
                                 </div>
                             </div>
 
-                            <div className="builder-preview">
-                                <div className="builder-preview-header">
-                                    <span className="builder-preview-label">Preview</span>
-                                    <div className="builder-preview-actions">
-                                        {versionHistory.length > 0 && (
-                                            <button
-                                                type="button"
-                                                className="builder-action-btn undo"
-                                                onClick={handleUndo}
-                                                disabled={buildState.isBuilding}
-                                            >
-                                                Undo
-                                            </button>
-                                        )}
-                                        {buildState.productId && publishStatus !== 'published' && (
-                                            <button
-                                                type="button"
-                                                className="builder-action-btn publish"
-                                                onClick={() => void handlePublish()}
-                                                disabled={buildState.isBuilding || publishStatus === 'publishing'}
-                                            >
-                                                {publishStatus === 'publishing' ? 'Publishing...' : 'Publish'}
-                                            </button>
-                                        )}
-                                        {publishStatus === 'published' && (
-                                            <span className="builder-action-btn published">Live</span>
-                                        )}
-                                        <span className="builder-preview-badge">
-                                            {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="builder-preview-body">
-                                    <div className="builder-preview-iframe-wrap">
-                                        <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
-                                    </div>
-                                </div>
+                            <div className="min-h-0 flex-1 p-2.5">
+                                <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
                             </div>
-                        </div>
+                        </section>
+                    </div>
 
-                        <form
-                            className="builder-composer"
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                void handleSubmit();
-                            }}
-                        >
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                placeholder={
-                                    buildState.isBuilding
-                                        ? 'Generation in progress...'
-                                        : buildState.productId
-                                            ? 'Refine your draft...'
-                                            : 'Tell the assistant what to build...'
-                                }
-                                className="builder-input"
-                                disabled={buildState.isBuilding}
-                            />
-                            <button type="submit" className="builder-send" disabled={!input.trim() || buildState.isBuilding}>
-                                Send
-                            </button>
-                        </form>
-                        {composerError && <div className="builder-error">{composerError}</div>}
-                    </>
-                )}
-            </div>
+                    <form
+                        className="flex items-center gap-2 border-t border-slate-200 bg-white px-3 py-2.5 sm:px-4"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleSubmit();
+                        }}
+                    >
+                        <Input
+                            ref={inputRef}
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder={
+                                buildState.isBuilding
+                                    ? 'Generation in progress...'
+                                    : buildState.productId
+                                        ? 'Refine your draft...'
+                                        : 'Tell the assistant what to build...'
+                            }
+                            className="h-9 text-sm"
+                            disabled={buildState.isBuilding}
+                        />
+                        <Button type="submit" size="sm" className="h-9 px-4" disabled={!input.trim() || buildState.isBuilding}>
+                            Send
+                        </Button>
+                    </form>
+                    {composerError && <p className="px-4 pb-2 text-xs text-red-700">{composerError}</p>}
+                </>
+            )}
         </div>
     );
 }
