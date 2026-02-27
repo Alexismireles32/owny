@@ -5,6 +5,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { DashboardShell } from '@/components/dashboard/DashboardShell';
+import { Button } from '@/components/ui/button';
 
 export default async function DashboardPage() {
     const supabase = await createClient();
@@ -49,68 +50,21 @@ export default async function DashboardPage() {
         .eq('creator_id', creatorId);
 
     return (
-        <div className="min-h-screen" style={{ background: '#060d18' }}>
-            <header
-                style={{
-                    height: '64px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0 1.2rem',
-                    borderBottom: '1px solid rgba(226,232,240,0.14)',
-                    background:
-                        'linear-gradient(100deg, rgba(7,18,32,0.95), rgba(9,21,35,0.9) 42%, rgba(8,21,35,0.9))',
-                    backdropFilter: 'blur(10px)',
-                }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
-                    <span
-                        style={{
-                            fontSize: '1.05rem',
-                            fontWeight: 800,
-                            letterSpacing: '0.03em',
-                            color: '#e2e8f0',
-                        }}
-                    >
-                        OWNY
-                    </span>
-                    <span
-                        style={{
-                            border: '1px solid rgba(34,211,238,0.35)',
-                            borderRadius: '999px',
-                            padding: '0.2rem 0.5rem',
-                            fontSize: '0.6rem',
-                            letterSpacing: '0.08em',
-                            textTransform: 'uppercase',
-                            color: '#67e8f9',
-                            background: 'rgba(34,211,238,0.1)',
-                            fontWeight: 700,
-                        }}
-                    >
-                        Studio
-                    </span>
-                </div>
+        <div className="min-h-screen bg-slate-100 text-slate-900">
+            <header className="h-14 border-b border-slate-200 bg-white">
+                <div className="mx-auto flex h-full w-full max-w-[1600px] items-center justify-between px-4 sm:px-6">
+                    <div className="flex items-center">
+                        <span className="text-sm font-semibold tracking-[0.08em] text-slate-900">OWNY</span>
+                    </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.95rem' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'rgba(226,232,240,0.64)' }}>{creator.display_name}</span>
-                    <form action="/api/auth/signout" method="POST">
-                        <button
-                            type="submit"
-                            style={{
-                                border: '1px solid rgba(226,232,240,0.2)',
-                                borderRadius: '0.7rem',
-                                padding: '0.34rem 0.58rem',
-                                background: 'rgba(226,232,240,0.08)',
-                                color: 'rgba(226,232,240,0.86)',
-                                fontSize: '0.66rem',
-                                cursor: 'pointer',
-                                fontFamily: 'inherit',
-                                fontWeight: 600,
-                            }}
-                        >
-                            Sign out
-                        </button>
-                    </form>
+                    <div className="flex items-center gap-3">
+                        <span className="hidden text-sm text-slate-500 sm:inline">{creator.display_name}</span>
+                        <form action="/api/auth/signout" method="POST">
+                            <Button type="submit" size="sm" variant="outline">
+                                Sign out
+                            </Button>
+                        </form>
+                    </div>
                 </div>
             </header>
 

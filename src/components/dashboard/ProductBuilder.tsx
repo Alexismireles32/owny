@@ -27,8 +27,6 @@ interface BuildState {
     phase: string;
 }
 
-type PreviewMode = 'desktop' | 'tablet' | 'mobile';
-
 interface VersionSnapshot {
     html: string;
     versionId: string | null;
@@ -41,19 +39,33 @@ interface SourceVideo {
 }
 
 const SUGGESTIONS = [
-    { icon: 'DOC', label: 'Create a PDF guide', type: 'pdf_guide' as const },
-    { icon: 'CRS', label: 'Build a mini course', type: 'mini_course' as const },
-    { icon: '7DY', label: 'Make a 7-day challenge', type: 'challenge_7day' as const },
-    { icon: 'KIT', label: 'Create a checklist toolkit', type: 'checklist_toolkit' as const },
+    { label: 'Create a PDF guide' },
+    { label: 'Build a mini course' },
+    { label: 'Make a 7-day challenge' },
+    { label: 'Create a checklist toolkit' },
 ];
 
-const BUILD_PHASES = [
-    { key: 'analyzing', label: 'Analyze' },
-    { key: 'retrieving', label: 'Retrieve' },
-    { key: 'planning', label: 'Plan' },
-    { key: 'building', label: 'Build' },
-    { key: 'saving', label: 'Save' },
-] as const;
+const TOPIC_STOPWORDS = new Set([
+    'your',
+    'you',
+    'create',
+    'make',
+    'guide',
+    'video',
+    'videos',
+    'content',
+    'library',
+    'topic',
+    'topics',
+    'best',
+    'real',
+    'the',
+    'and',
+    'for',
+    'from',
+    'owny',
+    'official',
+]);
 
 function normalizePhase(phase: string): string {
     if (phase === 'init') return 'analyzing';
@@ -63,20 +75,44 @@ function normalizePhase(phase: string): string {
     return phase;
 }
 
-function phaseIndex(phase: string): number {
-    const normalized = normalizePhase(phase);
-    const idx = BUILD_PHASES.findIndex((item) => item.key === normalized);
-    return idx >= 0 ? idx : 0;
-}
-
 function sanitizeMessageText(content: string): string {
     return content.replace(/\*\*(.*?)\*\*/g, '$1').trim();
 }
 
-function formatMessageTime(value: Date): string {
-    const hh = String(value.getHours()).padStart(2, '0');
-    const mm = String(value.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+function normalizeTextToken(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+}
+
+function filterTopicSuggestions(
+    rawTopics: { topic: string; videoCount: number }[],
+    displayName: string
+): { topic: string; videoCount: number }[] {
+    const displayNameTokens = normalizeTextToken(displayName)
+        .split(/\s+/)
+        .filter((token) => token.length >= 3);
+
+    const filtered = rawTopics
+        .filter((item) => {
+            const topic = normalizeTextToken(item.topic);
+            if (!topic || topic.length < 4) return false;
+            if (TOPIC_STOPWORDS.has(topic)) return false;
+            if (displayNameTokens.includes(topic)) return false;
+            if (item.videoCount < 2) return false;
+            return true;
+        })
+        .slice(0, 6);
+
+    if (filtered.length > 0) return filtered;
+
+    return rawTopics
+        .filter((item) => {
+            const topic = normalizeTextToken(item.topic);
+            if (!topic || topic.length < 4) return false;
+            if (TOPIC_STOPWORDS.has(topic)) return false;
+            if (displayNameTokens.includes(topic)) return false;
+            return true;
+        })
+        .slice(0, 4);
 }
 
 function loadPersistedMessages(creatorId: string): ChatMessage[] {
@@ -110,7 +146,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     });
     const [pendingProductType, setPendingProductType] = useState<string | null>(null);
     const [composerError, setComposerError] = useState<string | null>(null);
-    const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop');
     const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
     const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'published'>('idle');
 
@@ -216,12 +251,14 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 const content = typeof event.message === 'string'
                                     ? event.message
                                     : 'Choose one topic to focus your product.';
+                                const rawTopics = Array.isArray(event.topics)
+                                    ? (event.topics as { topic: string; videoCount: number }[])
+                                    : [];
+                                const topicSuggestions = filterTopicSuggestions(rawTopics, displayName);
                                 addMessage({
                                     role: 'assistant',
                                     content,
-                                    topicSuggestions: Array.isArray(event.topics)
-                                        ? (event.topics as { topic: string; videoCount: number }[])
-                                        : [],
+                                    topicSuggestions,
                                     productType: typeof event.productType === 'string' ? event.productType : undefined,
                                 });
                                 setBuildState((s) => ({ ...s, isBuilding: false }));
@@ -234,7 +271,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 if (videos.length > 0) {
                                     addMessage({
                                         role: 'status',
-                                        content: `📹 Using ${videos.length} videos: ${videos.slice(0, 3).map(v => `"${v.title}"`).join(', ')}${videos.length > 3 ? ` +${videos.length - 3} more` : ''}`,
+                                        content: `Using ${videos.length} videos: ${videos.slice(0, 3).map((v) => `"${v.title}"`).join(', ')}${videos.length > 3 ? ` +${videos.length - 3} more` : ''}`,
                                     });
                                 }
                                 continue;
@@ -254,7 +291,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                         if (titleText) {
                                             addMessage({
                                                 role: 'status',
-                                                content: `✏️ Writing section ${currentSections}: ${titleText}...`,
+                                                content: `Writing section ${currentSections}: ${titleText}...`,
                                             });
                                         }
                                     }
@@ -320,7 +357,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                 }
             }
         },
-        [addMessage, onProductCreated]
+        [addMessage, displayName, onProductCreated]
     );
 
     const handleTopicSelect = useCallback(
@@ -367,14 +404,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
     const hasProduct = buildState.html.length > 0;
     const showWelcome = !hasProduct && !buildState.isBuilding && messages.length === 0;
-    const activeStep = phaseIndex(buildState.phase);
 
     const handleUndo = useCallback(() => {
         if (versionHistory.length === 0) return;
         const prev = versionHistory[versionHistory.length - 1];
         setBuildState((s) => ({ ...s, html: prev.html, versionId: prev.versionId }));
         setVersionHistory((h) => h.slice(0, -1));
-        addMessage({ role: 'status', content: `↩️ Reverted to ${prev.label}` });
+        addMessage({ role: 'status', content: `Reverted to ${prev.label}` });
     }, [versionHistory, addMessage]);
 
     const handlePublish = useCallback(async () => {
@@ -384,7 +420,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
             const res = await fetch(`/api/products/${buildState.productId}/publish`, { method: 'POST' });
             if (res.ok) {
                 setPublishStatus('published');
-                addMessage({ role: 'assistant', content: '🎉 Product published! It\'s now live on your storefront.' });
+                addMessage({ role: 'assistant', content: 'Product published. It is now live on your storefront.' });
                 onProductCreated();
             } else {
                 setPublishStatus('idle');
@@ -407,44 +443,18 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
         <div className="builder-root">
             <style>{`
                 .builder-root {
-                    --bg-a: #091320;
-                    --bg-b: #101d2e;
-                    --bg-c: #16263b;
-                    --surface: rgba(255, 255, 255, 0.06);
-                    --surface-strong: rgba(255, 255, 255, 0.1);
-                    --line: rgba(255, 255, 255, 0.14);
-                    --text: #e2e8f0;
-                    --muted: rgba(226, 232, 240, 0.62);
-                    --accent: #22d3ee;
-                    --accent-strong: #0891b2;
-                    --highlight: #f59e0b;
+                    --line: #e2e8f0;
+                    --text: #0f172a;
+                    --muted: #64748b;
                     position: relative;
                     flex: 1;
                     display: flex;
                     flex-direction: column;
                     min-height: 0;
                     color: var(--text);
-                    background:
-                        radial-gradient(700px 260px at 18% -5%, rgba(34, 211, 238, 0.16), transparent 60%),
-                        radial-gradient(800px 260px at 92% -4%, rgba(245, 158, 11, 0.15), transparent 62%),
-                        linear-gradient(145deg, var(--bg-a), var(--bg-b) 52%, var(--bg-c));
-                    overflow: hidden;
-                }
-                .builder-root::before {
-                    content: '';
-                    position: absolute;
-                    inset: 0;
-                    pointer-events: none;
-                    opacity: 0.26;
-                    background-image:
-                        linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-                    background-size: 30px 30px;
-                    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 92%);
+                    background: #ffffff;
                 }
                 .builder-content {
-                    position: relative;
-                    z-index: 1;
                     display: flex;
                     flex: 1;
                     min-height: 0;
@@ -455,81 +465,40 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     justify-content: space-between;
                     align-items: center;
                     gap: 1rem;
-                    padding: 0.9rem 1rem;
+                    padding: 0.75rem 1rem;
                     border-bottom: 1px solid var(--line);
-                    background: rgba(5, 12, 22, 0.42);
-                    backdrop-filter: blur(12px);
-                }
-                .builder-top-left {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.7rem;
-                }
-                .builder-pill {
-                    padding: 0.3rem 0.55rem;
-                    border-radius: 999px;
-                    font-size: 0.62rem;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    font-weight: 700;
-                    border: 1px solid rgba(34, 211, 238, 0.38);
-                    color: #67e8f9;
-                    background: rgba(34, 211, 238, 0.12);
+                    background: #ffffff;
                 }
                 .builder-title {
-                    font-size: 0.86rem;
+                    font-size: 0.82rem;
                     font-weight: 600;
-                    color: rgba(226, 232, 240, 0.92);
+                    color: #334155;
                 }
                 .builder-top-right {
                     display: flex;
                     align-items: center;
-                    gap: 0.75rem;
+                    gap: 0.5rem;
                 }
-                .builder-phase {
-                    display: flex;
-                    gap: 0.45rem;
-                    align-items: center;
-                }
-                .builder-phase-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.4rem;
-                    color: var(--muted);
-                    font-size: 0.65rem;
-                    letter-spacing: 0.05em;
+                .builder-phase-badge {
+                    border: 1px solid #cbd5e1;
+                    background: #f8fafc;
+                    color: #475569;
+                    border-radius: 999px;
+                    padding: 0.2rem 0.5rem;
+                    font-size: 0.58rem;
+                    letter-spacing: 0.08em;
                     text-transform: uppercase;
-                }
-                .builder-phase-dot {
-                    width: 8px;
-                    height: 8px;
-                    border-radius: 50%;
-                    border: 1px solid rgba(148, 163, 184, 0.4);
-                    background: transparent;
-                    transition: all 0.25s ease;
-                }
-                .builder-phase-item.done .builder-phase-dot,
-                .builder-phase-item.active .builder-phase-dot {
-                    border-color: rgba(34, 211, 238, 0.8);
-                    background: linear-gradient(140deg, var(--accent), var(--highlight));
-                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
-                }
-                .builder-phase-item.active {
-                    color: rgba(226, 232, 240, 0.92);
+                    font-weight: 600;
                 }
                 .builder-stop {
-                    border: 1px solid rgba(248, 113, 113, 0.45);
-                    background: rgba(248, 113, 113, 0.14);
-                    color: #fecaca;
+                    border: 1px solid #fca5a5;
+                    background: #fef2f2;
+                    color: #b91c1c;
                     border-radius: 999px;
                     padding: 0.3rem 0.7rem;
                     font-size: 0.66rem;
                     font-weight: 600;
                     cursor: pointer;
-                    transition: all 0.2s ease;
-                }
-                .builder-stop:hover {
-                    background: rgba(248, 113, 113, 0.2);
                 }
                 .builder-welcome {
                     flex: 1;
@@ -538,70 +507,53 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     flex-direction: column;
                     justify-content: center;
                     align-items: center;
-                    padding: 2rem 1.5rem 1.4rem;
-                    gap: 1.4rem;
+                    padding: 1.6rem 1rem 1rem;
+                    gap: 1rem;
                 }
                 .builder-welcome-card {
                     width: min(820px, 100%);
-                    border-radius: 1.25rem;
+                    border-radius: 1rem;
                     border: 1px solid var(--line);
-                    background: rgba(7, 15, 28, 0.62);
-                    box-shadow: 0 24px 40px rgba(0, 0, 0, 0.2);
-                    padding: 1.7rem;
+                    background: #ffffff;
+                    box-shadow: none;
+                    padding: 1.2rem;
                 }
                 .builder-welcome-headline {
-                    font-size: clamp(1.3rem, 2.4vw, 2rem);
-                    line-height: 1.1;
-                    letter-spacing: -0.02em;
+                    font-size: clamp(1.15rem, 1.9vw, 1.55rem);
+                    line-height: 1.2;
+                    letter-spacing: -0.01em;
                     margin: 0;
-                    color: #f8fafc;
+                    color: #0f172a;
                 }
                 .builder-welcome-copy {
-                    margin: 0.75rem 0 0;
+                    margin: 0.55rem 0 0;
                     color: var(--muted);
-                    max-width: 56ch;
-                    line-height: 1.55;
-                    font-size: 0.92rem;
+                    max-width: 52ch;
+                    line-height: 1.5;
+                    font-size: 0.86rem;
                 }
                 .builder-suggestion-grid {
-                    margin-top: 1.2rem;
+                    margin-top: 1rem;
                     display: grid;
                     grid-template-columns: repeat(2, minmax(0, 1fr));
-                    gap: 0.65rem;
+                    gap: 0.5rem;
                 }
                 .builder-suggestion {
                     border: 1px solid var(--line);
-                    border-radius: 0.95rem;
-                    background: linear-gradient(145deg, rgba(14, 27, 45, 0.84), rgba(18, 37, 58, 0.78));
-                    color: rgba(226, 232, 240, 0.9);
-                    text-align: left;
-                    display: flex;
-                    align-items: center;
-                    gap: 0.7rem;
-                    padding: 0.75rem 0.85rem;
-                    font-size: 0.78rem;
+                    border-radius: 0.75rem;
+                    background: #ffffff;
+                    color: #334155;
+                    text-align: center;
+                    display: block;
+                    padding: 0.65rem 0.75rem;
+                    font-size: 0.76rem;
                     cursor: pointer;
-                    transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+                    transition: border-color 0.2s ease, background 0.2s ease;
                     font-family: inherit;
                 }
                 .builder-suggestion:hover {
-                    transform: translateY(-2px);
-                    border-color: rgba(34, 211, 238, 0.4);
-                    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.22), 0 12px 24px rgba(0, 0, 0, 0.2);
-                }
-                .builder-suggestion-tag {
-                    min-width: 2.4rem;
-                    text-align: center;
-                    font-weight: 700;
-                    font-size: 0.62rem;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    border-radius: 0.5rem;
-                    border: 1px solid rgba(34, 211, 238, 0.35);
-                    background: rgba(34, 211, 238, 0.11);
-                    color: #67e8f9;
-                    padding: 0.28rem 0.35rem;
-                    flex-shrink: 0;
+                    border-color: #94a3b8;
+                    background: #f8fafc;
                 }
                 .builder-layout {
                     flex: 1;
@@ -615,16 +567,16 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     display: flex;
                     flex-direction: column;
                     min-height: 0;
-                    background: rgba(5, 12, 24, 0.45);
+                    background: #fafafa;
                 }
                 .builder-chat-header {
-                    padding: 0.8rem 0.95rem;
+                    padding: 0.7rem 0.85rem;
                     border-bottom: 1px solid var(--line);
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
                     gap: 0.6rem;
-                    background: rgba(5, 12, 24, 0.68);
+                    background: #ffffff;
                 }
                 .builder-chat-status {
                     display: flex;
@@ -637,15 +589,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     color: var(--muted);
                 }
                 .builder-chat-dot {
-                    width: 8px;
-                    height: 8px;
+                    width: 6px;
+                    height: 6px;
                     border-radius: 50%;
                     background: #94a3b8;
-                    opacity: 0.8;
                 }
                 .builder-chat-dot.live {
-                    background: linear-gradient(145deg, var(--accent), var(--highlight));
-                    box-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+                    background: #0f172a;
                     animation: pulseDot 1.3s ease-in-out infinite;
                 }
                 @keyframes pulseDot {
@@ -656,59 +606,44 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     flex: 1;
                     min-height: 0;
                     overflow-y: auto;
-                    padding: 0.9rem;
+                    padding: 0.75rem;
                     display: flex;
                     flex-direction: column;
-                    gap: 0.62rem;
+                    gap: 0.5rem;
                 }
                 .builder-msg-wrap {
                     display: flex;
-                    flex-direction: column;
-                    gap: 0.25rem;
                 }
                 .builder-msg {
-                    border-radius: 0.9rem;
+                    border-radius: 0.75rem;
                     border: 1px solid transparent;
-                    padding: 0.56rem 0.7rem;
+                    padding: 0.52rem 0.66rem;
                     font-size: 0.78rem;
-                    line-height: 1.55;
+                    line-height: 1.5;
                     max-width: 95%;
-                    animation: fadeUp 0.2s ease;
-                }
-                @keyframes fadeUp {
-                    from { transform: translateY(4px); opacity: 0; }
-                    to { transform: translateY(0); opacity: 1; }
                 }
                 .builder-msg.user {
                     align-self: flex-end;
-                    background: linear-gradient(140deg, rgba(34, 211, 238, 0.9), rgba(14, 116, 144, 0.95));
-                    color: #082f49;
+                    background: #0f172a;
+                    color: #ffffff;
                     border-bottom-right-radius: 0.25rem;
-                    border-color: rgba(34, 211, 238, 0.35);
+                    border-color: #0f172a;
                 }
                 .builder-msg.assistant {
                     align-self: flex-start;
-                    background: rgba(226, 232, 240, 0.07);
-                    border-color: rgba(226, 232, 240, 0.12);
-                    color: rgba(241, 245, 249, 0.94);
+                    background: #ffffff;
+                    border-color: #e2e8f0;
+                    color: #0f172a;
                     border-bottom-left-radius: 0.25rem;
                 }
                 .builder-msg.status {
                     align-self: center;
-                    background: rgba(245, 158, 11, 0.12);
-                    border-color: rgba(245, 158, 11, 0.28);
-                    color: #fde68a;
+                    background: #f8fafc;
+                    border-color: #cbd5e1;
+                    color: #475569;
                     max-width: 100%;
                     font-size: 0.7rem;
                     letter-spacing: 0.02em;
-                }
-                .builder-msg-time {
-                    font-size: 0.62rem;
-                    color: rgba(226, 232, 240, 0.35);
-                    align-self: flex-start;
-                }
-                .builder-msg-wrap.user .builder-msg-time {
-                    align-self: flex-end;
                 }
                 .builder-topic-chips {
                     margin-top: 0.35rem;
@@ -717,9 +652,9 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     gap: 0.35rem;
                 }
                 .builder-topic-chip {
-                    border: 1px solid rgba(34, 211, 238, 0.28);
-                    background: rgba(34, 211, 238, 0.13);
-                    color: #a5f3fc;
+                    border: 1px solid #cbd5e1;
+                    background: #f8fafc;
+                    color: #334155;
                     border-radius: 999px;
                     padding: 0.3rem 0.58rem;
                     font-size: 0.66rem;
@@ -731,21 +666,19 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     transition: all 0.2s ease;
                 }
                 .builder-topic-chip:hover {
-                    background: rgba(34, 211, 238, 0.22);
-                    border-color: rgba(34, 211, 238, 0.46);
-                    transform: translateY(-1px);
+                    background: #f1f5f9;
+                    border-color: #94a3b8;
                 }
                 .builder-topic-chip:disabled {
                     opacity: 0.55;
                     cursor: not-allowed;
-                    transform: none;
                 }
                 .builder-topic-count {
                     border-radius: 999px;
                     padding: 0.1rem 0.4rem;
                     font-size: 0.58rem;
-                    background: rgba(7, 20, 35, 0.55);
-                    color: rgba(226, 232, 240, 0.7);
+                    background: #e2e8f0;
+                    color: #475569;
                 }
                 .builder-preview {
                     flex: 1;
@@ -753,20 +686,17 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     display: flex;
                     flex-direction: column;
                     min-height: 0;
-                    background: rgba(4, 10, 20, 0.48);
+                    background: #ffffff;
                 }
                 .builder-preview-header {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    padding: 0.75rem 1rem;
+                    padding: 0.7rem 0.85rem;
                     border-bottom: 1px solid var(--line);
-                    background: rgba(4, 10, 20, 0.78);
+                    background: #ffffff;
                 }
-                .builder-preview-meta {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.6rem;
+                .builder-preview-label {
                     font-size: 0.68rem;
                     letter-spacing: 0.08em;
                     text-transform: uppercase;
@@ -774,9 +704,9 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     font-weight: 600;
                 }
                 .builder-preview-badge {
-                    border: 1px solid rgba(245, 158, 11, 0.4);
-                    background: rgba(245, 158, 11, 0.15);
-                    color: #fcd34d;
+                    border: 1px solid #cbd5e1;
+                    background: #f8fafc;
+                    color: #475569;
                     border-radius: 999px;
                     padding: 0.22rem 0.5rem;
                     font-size: 0.58rem;
@@ -786,22 +716,22 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                 .builder-preview-body {
                     flex: 1;
                     min-height: 0;
-                    padding: 0.85rem;
+                    padding: 0.6rem;
                 }
                 .builder-composer {
                     display: flex;
                     gap: 0.6rem;
                     align-items: center;
-                    padding: 0.8rem 1rem;
+                    padding: 0.7rem 0.85rem;
                     border-top: 1px solid var(--line);
-                    background: rgba(4, 10, 20, 0.68);
+                    background: #ffffff;
                 }
                 .builder-input {
                     flex: 1;
                     min-width: 0;
-                    border: 1px solid rgba(226, 232, 240, 0.16);
-                    background: rgba(226, 232, 240, 0.07);
-                    color: #f8fafc;
+                    border: 1px solid #cbd5e1;
+                    background: #ffffff;
+                    color: #0f172a;
                     border-radius: 999px;
                     padding: 0.65rem 0.9rem;
                     font-size: 0.82rem;
@@ -810,39 +740,36 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     transition: border-color 0.2s ease, box-shadow 0.2s ease;
                 }
                 .builder-input:focus {
-                    border-color: rgba(34, 211, 238, 0.55);
-                    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
+                    border-color: #0f172a;
+                    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
                 }
                 .builder-input::placeholder {
-                    color: rgba(226, 232, 240, 0.45);
+                    color: #94a3b8;
                 }
                 .builder-send {
-                    border: none;
-                    width: 42px;
-                    height: 42px;
-                    border-radius: 50%;
-                    font-size: 0.82rem;
-                    font-weight: 700;
-                    color: #082f49;
-                    background: linear-gradient(145deg, var(--accent), var(--highlight));
+                    border: 1px solid #0f172a;
+                    height: 38px;
+                    border-radius: 999px;
+                    padding: 0 0.9rem;
+                    font-size: 0.76rem;
+                    font-weight: 600;
+                    color: #ffffff;
+                    background: #0f172a;
                     cursor: pointer;
-                    transition: transform 0.2s ease, filter 0.2s ease;
+                    transition: background 0.2s ease;
                     flex-shrink: 0;
                 }
                 .builder-send:hover {
-                    transform: translateY(-1px) scale(1.03);
-                    filter: brightness(1.04);
+                    background: #1e293b;
                 }
                 .builder-send:disabled {
                     opacity: 0.4;
                     cursor: not-allowed;
-                    transform: none;
-                    filter: none;
                 }
                 .builder-error {
-                    margin: 0 1rem;
+                    margin: 0 0.85rem;
                     margin-top: 0.3rem;
-                    color: #fca5a5;
+                    color: #b91c1c;
                     font-size: 0.7rem;
                 }
                 .builder-preview-actions {
@@ -850,95 +777,67 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     align-items: center;
                     gap: 0.4rem;
                 }
-                .builder-device-btn {
-                    border: 1px solid rgba(226,232,240,0.12);
-                    background: rgba(226,232,240,0.06);
-                    color: var(--muted);
-                    border-radius: 0.5rem;
-                    padding: 0.28rem 0.5rem;
-                    font-size: 0.6rem;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    font-family: inherit;
-                    font-weight: 600;
-                }
-                .builder-device-btn:hover {
-                    border-color: rgba(34,211,238,0.35);
-                    color: rgba(226,232,240,0.9);
-                }
-                .builder-device-btn.active {
-                    border-color: rgba(34,211,238,0.5);
-                    background: rgba(34,211,238,0.15);
-                    color: #67e8f9;
-                }
                 .builder-action-btn {
-                    border: 1px solid rgba(34,211,238,0.35);
-                    background: rgba(34,211,238,0.12);
-                    color: #67e8f9;
+                    border: 1px solid #cbd5e1;
+                    background: #ffffff;
+                    color: #334155;
                     border-radius: 999px;
                     padding: 0.3rem 0.7rem;
                     font-size: 0.66rem;
                     font-weight: 600;
                     cursor: pointer;
-                    transition: all 0.2s ease;
+                    transition: background 0.2s ease;
                     font-family: inherit;
                 }
                 .builder-action-btn:hover {
-                    background: rgba(34,211,238,0.2);
+                    background: #f8fafc;
                 }
                 .builder-action-btn:disabled {
                     opacity: 0.4;
                     cursor: not-allowed;
                 }
                 .builder-action-btn.publish {
-                    border-color: rgba(74,222,128,0.45);
-                    background: rgba(74,222,128,0.15);
-                    color: #86efac;
+                    border-color: #86efac;
+                    background: #f0fdf4;
+                    color: #15803d;
                 }
                 .builder-action-btn.publish:hover {
-                    background: rgba(74,222,128,0.25);
+                    background: #dcfce7;
                 }
                 .builder-action-btn.published {
-                    border-color: rgba(74,222,128,0.35);
-                    background: rgba(74,222,128,0.08);
-                    color: #86efac;
+                    border-color: #86efac;
+                    background: #f0fdf4;
+                    color: #15803d;
                     cursor: default;
                 }
                 .builder-action-btn.undo {
-                    border-color: rgba(245,158,11,0.35);
-                    background: rgba(245,158,11,0.1);
-                    color: #fcd34d;
+                    border-color: #fcd34d;
+                    background: #fffbeb;
+                    color: #92400e;
                 }
                 .builder-action-btn.undo:hover {
-                    background: rgba(245,158,11,0.18);
+                    background: #fef3c7;
                 }
                 .builder-clear-btn {
-                    border: 1px solid rgba(248,113,113,0.25);
+                    border: 1px solid #cbd5e1;
                     background: transparent;
-                    color: rgba(248,113,113,0.7);
+                    color: #64748b;
                     border-radius: 999px;
                     padding: 0.3rem 0.6rem;
                     font-size: 0.6rem;
                     cursor: pointer;
-                    transition: all 0.2s ease;
+                    transition: background 0.2s ease;
                     font-family: inherit;
                 }
                 .builder-clear-btn:hover {
-                    background: rgba(248,113,113,0.1);
-                    color: #fca5a5;
+                    background: #f8fafc;
+                    color: #334155;
                 }
                 .builder-preview-iframe-wrap {
                     width: 100%;
                     height: 100%;
                     display: flex;
                     justify-content: center;
-                    transition: all 0.3s ease;
-                }
-                .builder-preview-iframe-wrap.tablet {
-                    padding: 0 10%;
-                }
-                .builder-preview-iframe-wrap.mobile {
-                    padding: 0 25%;
                 }
                 @media (max-width: 1024px) {
                     .builder-chat {
@@ -961,34 +860,14 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     .builder-suggestion-grid {
                         grid-template-columns: 1fr;
                     }
-                    .builder-phase {
-                        display: none;
-                    }
                 }
             `}</style>
 
             <div className="builder-content">
                 <div className="builder-top">
-                    <div className="builder-top-left">
-                        <span className="builder-pill">Owny Studio</span>
-                        <span className="builder-title">Building with {displayName}&apos;s real content</span>
-                    </div>
+                    <span className="builder-title">Building with {displayName}&apos;s content</span>
                     <div className="builder-top-right">
-                        <div className="builder-phase">
-                            {BUILD_PHASES.map((item, i) => {
-                                const done = i < activeStep;
-                                const active = i === activeStep && buildState.isBuilding;
-                                return (
-                                    <div
-                                        key={item.key}
-                                        className={`builder-phase-item ${done ? 'done' : ''} ${active ? 'active' : ''}`}
-                                    >
-                                        <span className="builder-phase-dot" />
-                                        <span>{item.label}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        {buildState.phase && <span className="builder-phase-badge">{normalizePhase(buildState.phase)}</span>}
                         {buildState.isBuilding && (
                             <button type="button" className="builder-stop" onClick={stopActiveBuild}>
                                 Stop
@@ -1003,8 +882,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                             <div className="builder-welcome-card">
                                 <h2 className="builder-welcome-headline">Design a sellable product from your creator voice</h2>
                                 <p className="builder-welcome-copy">
-                                    Pick a format and I&apos;ll transform your best TikTok ideas into a polished digital product draft.
-                                    Everything is built from your real transcript library so the result sounds like you, not generic AI copy.
+                                    Pick a format to start, then refine it with simple instructions.
                                 </p>
                                 <div className="builder-suggestion-grid">
                                     {SUGGESTIONS.map((suggestion) => (
@@ -1014,8 +892,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                             className="builder-suggestion"
                                             onClick={() => handleSubmit(suggestion.label)}
                                         >
-                                            <span className="builder-suggestion-tag">{suggestion.icon}</span>
-                                            <span>{suggestion.label}</span>
+                                            {suggestion.label}
                                         </button>
                                     ))}
                                 </div>
@@ -1034,11 +911,11 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 type="text"
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
-                                placeholder="Or describe the exact product angle you want to launch..."
+                                placeholder="Describe what you want to create..."
                                 className="builder-input"
                             />
                             <button type="submit" className="builder-send" disabled={!input.trim()}>
-                                Go
+                                Send
                             </button>
                         </form>
                         {composerError && <div className="builder-error">{composerError}</div>}
@@ -1056,12 +933,9 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                 : buildState.productId
                                                     ? 'Draft ready'
                                                     : 'Assistant'}
-                                        </span>
+                                            </span>
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                        {buildState.phase && (
-                                            <span className="builder-preview-badge">{normalizePhase(buildState.phase)}</span>
-                                        )}
                                         {messages.length > 0 && (
                                             <button type="button" className="builder-clear-btn" onClick={handleClearChat}>
                                                 Clear
@@ -1083,7 +957,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                         </p>
                                                     ))}
                                                 </div>
-                                                <span className="builder-msg-time">{formatMessageTime(msg.timestamp)}</span>
                                                 {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
                                                     <div className="builder-topic-chips">
                                                         {msg.topicSuggestions.map((topic) => (
@@ -1109,22 +982,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
                             <div className="builder-preview">
                                 <div className="builder-preview-header">
-                                    <div className="builder-preview-meta">
-                                        <span>Live Preview</span>
-                                        <div className="builder-preview-actions">
-                                            {(['desktop', 'tablet', 'mobile'] as PreviewMode[]).map((mode) => (
-                                                <button
-                                                    key={mode}
-                                                    type="button"
-                                                    className={`builder-device-btn ${previewMode === mode ? 'active' : ''}`}
-                                                    onClick={() => setPreviewMode(mode)}
-                                                    title={mode.charAt(0).toUpperCase() + mode.slice(1)}
-                                                >
-                                                    {mode === 'desktop' ? '🖥' : mode === 'tablet' ? '📱' : '📱'}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
+                                    <span className="builder-preview-label">Preview</span>
                                     <div className="builder-preview-actions">
                                         {versionHistory.length > 0 && (
                                             <button
@@ -1133,7 +991,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                 onClick={handleUndo}
                                                 disabled={buildState.isBuilding}
                                             >
-                                                ↩ Undo
+                                                Undo
                                             </button>
                                         )}
                                         {buildState.productId && publishStatus !== 'published' && (
@@ -1143,11 +1001,11 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                 onClick={() => void handlePublish()}
                                                 disabled={buildState.isBuilding || publishStatus === 'publishing'}
                                             >
-                                                {publishStatus === 'publishing' ? 'Publishing...' : '🚀 Publish'}
+                                                {publishStatus === 'publishing' ? 'Publishing...' : 'Publish'}
                                             </button>
                                         )}
                                         {publishStatus === 'published' && (
-                                            <span className="builder-action-btn published">✓ Live</span>
+                                            <span className="builder-action-btn published">Live</span>
                                         )}
                                         <span className="builder-preview-badge">
                                             {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
@@ -1155,7 +1013,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                     </div>
                                 </div>
                                 <div className="builder-preview-body">
-                                    <div className={`builder-preview-iframe-wrap ${previewMode}`}>
+                                    <div className="builder-preview-iframe-wrap">
                                         <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
                                     </div>
                                 </div>
@@ -1178,14 +1036,14 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                     buildState.isBuilding
                                         ? 'Generation in progress...'
                                         : buildState.productId
-                                            ? 'Refine your draft: update structure, tone, or sections...'
+                                            ? 'Refine your draft...'
                                             : 'Tell the assistant what to build...'
                                 }
                                 className="builder-input"
                                 disabled={buildState.isBuilding}
                             />
                             <button type="submit" className="builder-send" disabled={!input.trim() || buildState.isBuilding}>
-                                Go
+                                Send
                             </button>
                         </form>
                         {composerError && <div className="builder-error">{composerError}</div>}
