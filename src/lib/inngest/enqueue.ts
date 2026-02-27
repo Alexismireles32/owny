@@ -109,7 +109,15 @@ async function getEventRunCount(eventInternalId: string, authToken: string): Pro
     return null;
 }
 
+function supportsCloudDispatchVerification(): boolean {
+    const mode = (inngest as unknown as { mode?: { type?: string } }).mode?.type;
+    return mode === 'cloud';
+}
+
 async function verifyDispatchCreatedRun(eventInternalId: string): Promise<boolean | null> {
+    // Dev mode emits local event ids that are not queryable through cloud run APIs.
+    if (!supportsCloudDispatchVerification()) return null;
+
     const signingKey = process.env.INNGEST_SIGNING_KEY;
     const authToken = hashSigningKeyForApi(signingKey);
     if (!authToken) return null;
