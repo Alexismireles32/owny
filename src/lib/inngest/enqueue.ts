@@ -36,6 +36,7 @@ const DISPATCH_VERIFY_ATTEMPTS = 4;
 const DISPATCH_VERIFY_INTERVAL_MS = 1_000;
 
 let lastSyncAttemptAt = 0;
+let loggedInngestDispatchDisabled = false;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,7 +44,16 @@ function sleep(ms: number): Promise<void> {
 
 function getPipelineDispatchMode(): 'supabase' | 'inngest' {
     const raw = (process.env.PIPELINE_DISPATCH_MODE || 'supabase').trim().toLowerCase();
-    return raw === 'inngest' ? 'inngest' : 'supabase';
+    if (raw !== 'inngest') return 'supabase';
+
+    const allowInngest = (process.env.PIPELINE_ALLOW_INNGEST_DISPATCH || '').trim().toLowerCase() === 'true';
+    if (allowInngest) return 'inngest';
+
+    if (!loggedInngestDispatchDisabled) {
+        loggedInngestDispatchDisabled = true;
+        log.warn('PIPELINE_DISPATCH_MODE=inngest ignored because PIPELINE_ALLOW_INNGEST_DISPATCH is not enabled.');
+    }
+    return 'supabase';
 }
 
 function getErrorMessage(error: unknown): string {
