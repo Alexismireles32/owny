@@ -16,6 +16,7 @@ import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert, type PipelineTrigger } from '@/lib/inngest/reliability';
 import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
+import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
 
 const HANDLE_REGEX = /^[a-zA-Z0-9._]{1,24}$/;
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
@@ -53,19 +54,23 @@ async function enqueuePipelineEvent(
         }
 
         const enqueue = await enqueuePipelineStartEvent({ creatorId, handle, runId, trigger });
-        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        const fallbackInput = {
-            creatorId,
-            handle,
-            runId,
-            trigger,
-            source: 'scrape_profile',
-            graceMs: fallbackGraceMs,
-        } as const;
-        if (fallbackGraceMs === 0) {
-            void startDispatchFallbackWatchdog(fallbackInput);
+        if (enqueue.transport === 'queue') {
+            after(() => kickPipelineQueueProcessor('scrape_profile_enqueue', 2));
         } else {
-            after(() => startDispatchFallbackWatchdog(fallbackInput));
+            const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
+            const fallbackInput = {
+                creatorId,
+                handle,
+                runId,
+                trigger,
+                source: 'scrape_profile',
+                graceMs: fallbackGraceMs,
+            } as const;
+            if (fallbackGraceMs === 0) {
+                void startDispatchFallbackWatchdog(fallbackInput);
+            } else {
+                after(() => startDispatchFallbackWatchdog(fallbackInput));
+            }
         }
         return { ok: true as const, runId };
     } catch (err) {

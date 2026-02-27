@@ -2,6 +2,7 @@ import { inngest } from '@/lib/inngest/client';
 import { log } from '@/lib/logger';
 import { createHash, randomUUID } from 'crypto';
 import type { PipelineTrigger } from '@/lib/inngest/reliability';
+import { enqueuePipelineQueueJob } from '@/lib/pipeline/queue';
 
 interface PipelineStartEventInput {
     creatorId: string;
@@ -13,7 +14,7 @@ interface PipelineStartEventInput {
 
 interface EnqueueResult {
     ids: string[];
-    transport: 'sdk' | 'http';
+    transport: 'queue' | 'sdk' | 'http';
     endpoint?: string;
     runId: string;
     eventId: string;
@@ -38,6 +39,11 @@ let lastSyncAttemptAt = 0;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getPipelineDispatchMode(): 'supabase' | 'inngest' {
+    const raw = (process.env.PIPELINE_DISPATCH_MODE || 'supabase').trim().toLowerCase();
+    return raw === 'inngest' ? 'inngest' : 'supabase';
 }
 
 function getErrorMessage(error: unknown): string {
@@ -260,7 +266,6 @@ export async function enqueuePipelineStartEvent({
     trigger = 'unknown',
     replayOfRunId,
 }: PipelineStartEventInput): Promise<EnqueueResult> {
-    await ensureInngestRegistration();
     const normalizedRunId = runId || randomUUID();
     const eventId = `pipeline-start-${creatorId}-${normalizedRunId}`;
     const eventData = {
@@ -270,6 +275,27 @@ export async function enqueuePipelineStartEvent({
         trigger,
         replayOfRunId: replayOfRunId || null,
     };
+
+    if (getPipelineDispatchMode() !== 'inngest') {
+        const { jobId } = await enqueuePipelineQueueJob({
+            creatorId,
+            handle,
+            runId: normalizedRunId,
+            trigger,
+            replayOfRunId: replayOfRunId || null,
+        });
+
+        return {
+            ids: [jobId],
+            transport: 'queue',
+            runId: normalizedRunId,
+            eventId,
+            eventInternalId: jobId,
+            dispatchVerified: true,
+        };
+    }
+
+    await ensureInngestRegistration();
 
     try {
         const result = await inngest.send({

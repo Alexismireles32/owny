@@ -1,10 +1,11 @@
 // /api/jobs/process — Cron-triggered job processing endpoint
-// PRD M3/M4 — Processes queued import/indexing jobs
+// PRD M3/M4 — Processes queued import/indexing jobs + pipeline queue jobs
 // Intended to be called by Vercel Cron (e.g., every 1 minute)
 
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { processBatch } from '@/lib/import/job-processor';
+import { processPipelineJobBatch } from '@/lib/pipeline/queue';
 import { log } from '@/lib/logger';
 
 export async function POST(request: Request) {
@@ -23,14 +24,21 @@ export async function POST(request: Request) {
 
     try {
         const supabase = createAdminClient();
-        const result = await processBatch(supabase, 10);
+        const [importJobs, pipelineJobs] = await Promise.all([
+            processBatch(supabase, 10),
+            processPipelineJobBatch(10),
+        ]);
 
         log.info('Job batch processed', {
-            ...result,
+            importJobs,
+            pipelineJobs,
             category: 'jobs',
         });
 
-        return NextResponse.json(result);
+        return NextResponse.json({
+            importJobs,
+            pipelineJobs,
+        });
     } catch (err) {
         log.error('Job processing failed', {
             error: err instanceof Error ? err.message : 'Unknown error',

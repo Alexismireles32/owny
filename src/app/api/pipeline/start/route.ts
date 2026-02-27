@@ -9,6 +9,7 @@ import { rateLimitResponse } from '@/lib/rate-limit';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert } from '@/lib/inngest/reliability';
 import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
+import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -84,23 +85,27 @@ export async function POST(request: Request) {
             runId,
             trigger: 'manual_retry',
         });
-        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        const fallbackInput = {
-            creatorId,
-            handle,
-            runId,
-            trigger: 'manual_retry' as const,
-            source: 'pipeline_start',
-            graceMs: fallbackGraceMs,
-        };
-        if (fallbackGraceMs === 0) {
-            void startDispatchFallbackWatchdog(fallbackInput);
+        if (enqueue.transport === 'queue') {
+            after(() => kickPipelineQueueProcessor('pipeline_start_enqueue', 2));
         } else {
-            after(() => startDispatchFallbackWatchdog(fallbackInput));
+            const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
+            const fallbackInput = {
+                creatorId,
+                handle,
+                runId,
+                trigger: 'manual_retry' as const,
+                source: 'pipeline_start',
+                graceMs: fallbackGraceMs,
+            };
+            if (fallbackGraceMs === 0) {
+                void startDispatchFallbackWatchdog(fallbackInput);
+            } else {
+                after(() => startDispatchFallbackWatchdog(fallbackInput));
+            }
         }
 
         return NextResponse.json({
-            message: 'Pipeline started via Inngest',
+            message: 'Pipeline started',
             status: 'scraping',
             transport: enqueue.transport,
             runId,

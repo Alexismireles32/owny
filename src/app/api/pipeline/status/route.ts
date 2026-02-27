@@ -10,9 +10,11 @@ import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert } from '@/lib/inngest/reliability';
 import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
+import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
 
 const RUNNING_STATES = new Set(['scraping', 'transcribing', 'indexing', 'cleaning', 'clustering', 'extracting']);
 const STALE_PIPELINE_MS = 2 * 60 * 1000;
+const QUEUE_ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 const AUTO_RETRY_MARKER = 'Auto-retry enqueued at ';
 
 function getServiceDb() {
@@ -20,6 +22,10 @@ function getServiceDb() {
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
+}
+
+function usesSupabaseQueueDispatch(): boolean {
+    return (process.env.PIPELINE_DISPATCH_MODE || 'supabase').trim().toLowerCase() !== 'inngest';
 }
 
 export async function GET(request: Request) {
@@ -59,11 +65,18 @@ export async function GET(request: Request) {
 
         if (isStale) {
             const db = getServiceDb();
-            const [runRow, { count: videos = 0 }, { count: transcripts = 0 }] = await Promise.all([
+            const [runRow, queueRow, { count: videos = 0 }, { count: transcripts = 0 }] = await Promise.all([
                 creator.pipeline_run_id
                     ? db
                         .from('pipeline_runs')
                         .select('status, last_heartbeat_at')
+                        .eq('run_id', creator.pipeline_run_id)
+                        .maybeSingle()
+                    : Promise.resolve({ data: null, error: null }),
+                usesSupabaseQueueDispatch() && creator.pipeline_run_id
+                    ? db
+                        .from('pipeline_jobs')
+                        .select('status, updated_at, next_attempt_at')
                         .eq('run_id', creator.pipeline_run_id)
                         .maybeSingle()
                     : Promise.resolve({ data: null, error: null }),
@@ -79,7 +92,33 @@ export async function GET(request: Request) {
                 heartbeatMs > 0 &&
                 Date.now() - heartbeatMs <= STALE_PIPELINE_MS;
 
-            if (!runIsActivelyHeartbeating) {
+            if (queueRow?.error) {
+                log.warn('Failed to read pipeline queue state during stale check', {
+                    creatorId: creator.id,
+                    runId: creator.pipeline_run_id,
+                    error: queueRow.error.message,
+                });
+            }
+
+            const queueStatus = queueRow?.data?.status ?? null;
+            const queueUpdatedAtMs = queueRow?.data?.updated_at
+                ? new Date(queueRow.data.updated_at).getTime()
+                : 0;
+            const queueNextAttemptMs = queueRow?.data?.next_attempt_at
+                ? new Date(queueRow.data.next_attempt_at).getTime()
+                : 0;
+            const queueJobLooksActive =
+                (queueStatus === 'queued' || queueStatus === 'running') &&
+                (
+                    (queueUpdatedAtMs > 0 && Date.now() - queueUpdatedAtMs <= QUEUE_ACTIVE_WINDOW_MS) ||
+                    (queueNextAttemptMs > 0 && queueNextAttemptMs <= Date.now() + QUEUE_ACTIVE_WINDOW_MS)
+                );
+
+            if (queueJobLooksActive) {
+                after(() => kickPipelineQueueProcessor('pipeline_status_stale_probe', 2));
+            }
+
+            if (!runIsActivelyHeartbeating && !queueJobLooksActive) {
                 const alreadyRetried =
                     typeof creator.pipeline_error === 'string' &&
                     creator.pipeline_error.startsWith(AUTO_RETRY_MARKER);
@@ -139,19 +178,23 @@ export async function GET(request: Request) {
                         runId,
                         trigger: 'auto_recovery',
                     });
-                    const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-                    const fallbackInput = {
-                        creatorId: creator.id,
-                        handle: creator.handle,
-                        runId,
-                        trigger: 'auto_recovery' as const,
-                        source: 'pipeline_status_auto_recovery',
-                        graceMs: fallbackGraceMs,
-                    };
-                    if (fallbackGraceMs === 0) {
-                        void startDispatchFallbackWatchdog(fallbackInput);
+                    if (enqueue.transport === 'queue') {
+                        after(() => kickPipelineQueueProcessor('pipeline_status_auto_recovery', 2));
                     } else {
-                        after(() => startDispatchFallbackWatchdog(fallbackInput));
+                        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
+                        const fallbackInput = {
+                            creatorId: creator.id,
+                            handle: creator.handle,
+                            runId,
+                            trigger: 'auto_recovery' as const,
+                            source: 'pipeline_status_auto_recovery',
+                            graceMs: fallbackGraceMs,
+                        };
+                        if (fallbackGraceMs === 0) {
+                            void startDispatchFallbackWatchdog(fallbackInput);
+                        } else {
+                            after(() => startDispatchFallbackWatchdog(fallbackInput));
+                        }
                     }
                 } catch (err) {
                     const message = err instanceof Error ? err.message : 'Unknown enqueue error';

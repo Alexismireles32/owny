@@ -9,6 +9,7 @@ import { log } from '@/lib/logger';
 import { randomUUID } from 'crypto';
 import { emitPipelineAlert, markLatestDeadLetterReplayed } from '@/lib/inngest/reliability';
 import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
+import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
 
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
 
@@ -83,19 +84,23 @@ export async function POST(request: Request) {
             runId,
             trigger: 'dlq_replay',
         });
-        const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
-        const fallbackInput = {
-            creatorId: creator.id,
-            handle: creator.handle,
-            runId,
-            trigger: 'dlq_replay' as const,
-            source: 'pipeline_retry',
-            graceMs: fallbackGraceMs,
-        };
-        if (fallbackGraceMs === 0) {
-            void startDispatchFallbackWatchdog(fallbackInput);
+        if (enqueue.transport === 'queue') {
+            after(() => kickPipelineQueueProcessor('pipeline_retry_enqueue', 2));
         } else {
-            after(() => startDispatchFallbackWatchdog(fallbackInput));
+            const fallbackGraceMs = enqueue.dispatchVerified === false ? 0 : undefined;
+            const fallbackInput = {
+                creatorId: creator.id,
+                handle: creator.handle,
+                runId,
+                trigger: 'dlq_replay' as const,
+                source: 'pipeline_retry',
+                graceMs: fallbackGraceMs,
+            };
+            if (fallbackGraceMs === 0) {
+                void startDispatchFallbackWatchdog(fallbackInput);
+            } else {
+                after(() => startDispatchFallbackWatchdog(fallbackInput));
+            }
         }
         await markLatestDeadLetterReplayed(creator.id);
 

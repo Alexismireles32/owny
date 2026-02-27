@@ -33,6 +33,19 @@ export type PipelineStatus =
 
 export type PipelineRunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'superseded';
 export type PipelineDeadLetterStatus = 'open' | 'replayed' | 'resolved' | 'ignored';
+export type PipelineJobStatus =
+    | 'queued'
+    | 'running'
+    | 'succeeded'
+    | 'failed'
+    | 'dead_letter'
+    | 'cancelled';
+export type PipelineJobTrigger =
+    | 'onboarding'
+    | 'manual_retry'
+    | 'auto_recovery'
+    | 'dlq_replay'
+    | 'unknown';
 
 export interface Creator {
     id: string;
@@ -92,6 +105,27 @@ export interface PipelineDeadLetter {
     replay_count: number;
     replayed_at: string | null;
     resolved_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PipelineJob {
+    id: string;
+    creator_id: string;
+    handle: string;
+    run_id: string;
+    trigger: PipelineJobTrigger;
+    status: PipelineJobStatus;
+    attempts: number;
+    max_attempts: number;
+    next_attempt_at: string;
+    worker_id: string | null;
+    locked_at: string | null;
+    lock_expires_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    last_error: string | null;
+    payload: Record<string, unknown>;
     created_at: string;
     updated_at: string;
 }

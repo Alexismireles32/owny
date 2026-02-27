@@ -27,6 +27,7 @@ const PLACEHOLDER_WARNING_KEYS = [
     'STRIPE_CONNECT_WEBHOOK_SECRET',
     'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
 ] as const;
+const PIPELINE_DISPATCH_MODES = new Set(['supabase', 'inngest']);
 
 let validated = false;
 
@@ -73,6 +74,13 @@ export function validateServerEnv(): void {
     if (placeholderKeys.length > 0) {
         console.warn(
             `[env] Placeholder values detected for: ${placeholderKeys.join(', ')}`
+        );
+    }
+
+    const dispatchMode = (process.env.PIPELINE_DISPATCH_MODE || 'supabase').trim().toLowerCase();
+    if (!PIPELINE_DISPATCH_MODES.has(dispatchMode)) {
+        console.warn(
+            `[env] Invalid PIPELINE_DISPATCH_MODE="${process.env.PIPELINE_DISPATCH_MODE}". Falling back to "supabase".`
         );
     }
 }
