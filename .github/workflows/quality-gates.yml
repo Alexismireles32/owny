@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   quality-gates:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 45
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -52,7 +52,7 @@ jobs:
         run: npm run build
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Storybook interaction + accessibility tests
         run: npm run test-storybook
