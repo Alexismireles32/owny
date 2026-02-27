@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
 interface StorefrontPreviewProps {
@@ -10,11 +10,22 @@ interface StorefrontPreviewProps {
     creatorId: string;
 }
 
+function normalizePath(path: string): string {
+    if (!path) return '/';
+    const withLeadingSlash = path.startsWith('/') ? path : `/${path}`;
+    return withLeadingSlash.length > 1
+        ? withLeadingSlash.replace(/\/+$/, '')
+        : withLeadingSlash;
+}
+
 export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId }: StorefrontPreviewProps) {
     const [designPrompt, setDesignPrompt] = useState('');
     const [restyling, setRestyling] = useState(false);
     const [iframeLoaded, setIframeLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const iframeRef = useRef<HTMLIFrameElement | null>(null);
+    const storefrontPath = `/c/${handle}`;
+    const normalizedStorefrontPath = normalizePath(storefrontPath);
 
     const applyRestyle = useCallback(async (prompt: string) => {
         if (!prompt.trim() || restyling) return;
@@ -51,6 +62,57 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
         e.preventDefault();
         await applyRestyle(designPrompt);
     }, [applyRestyle, designPrompt]);
+
+    const forceStorefrontPath = useCallback(() => {
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+
+        try {
+            iframe.contentWindow?.location.replace(storefrontPath);
+        } catch {
+            // Fallback when location access is blocked by browser policies.
+            iframe.src = storefrontPath;
+        }
+        setIframeLoaded(false);
+    }, [storefrontPath]);
+
+    const validateIframePath = useCallback(() => {
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+
+        try {
+            const currentPath = normalizePath(iframe.contentWindow?.location.pathname || '');
+            if (currentPath !== normalizedStorefrontPath) {
+                forceStorefrontPath();
+                return;
+            }
+            setIframeLoaded(true);
+        } catch {
+            forceStorefrontPath();
+        }
+    }, [forceStorefrontPath, normalizedStorefrontPath]);
+
+    useEffect(() => {
+        setIframeLoaded(false);
+    }, [handle, storefrontKey]);
+
+    useEffect(() => {
+        const intervalId = window.setInterval(() => {
+            const iframe = iframeRef.current;
+            if (!iframe || !iframe.contentWindow) return;
+
+            try {
+                const currentPath = normalizePath(iframe.contentWindow.location.pathname || '');
+                if (currentPath !== normalizedStorefrontPath) {
+                    forceStorefrontPath();
+                }
+            } catch {
+                forceStorefrontPath();
+            }
+        }, 500);
+
+        return () => window.clearInterval(intervalId);
+    }, [forceStorefrontPath, normalizedStorefrontPath]);
 
     return (
         <div className="preview-root">
@@ -238,11 +300,13 @@ export function StorefrontPreview({ handle, storefrontKey, onRestyle, creatorId 
                         </div>
                     )}
                     <iframe
+                        ref={iframeRef}
                         key={storefrontKey}
-                        src={`/c/${handle}`}
+                        src={storefrontPath}
                         className={`preview-iframe ${iframeLoaded ? 'loaded' : ''}`}
                         title="Storefront Preview"
-                        onLoad={() => setIframeLoaded(true)}
+                        sandbox="allow-same-origin allow-scripts"
+                        onLoad={validateIframePath}
                     />
                 </div>
             </div>
