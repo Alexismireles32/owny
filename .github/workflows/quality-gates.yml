@@ -63,13 +63,12 @@ jobs:
       - name: Lighthouse quality gates
         run: npm run test:lighthouse
 
-      - name: Chromatic token not configured
-        if: ${{ secrets.CHROMATIC_PROJECT_TOKEN == '' }}
-        run: |
-          echo "::notice title=Chromatic disabled::Set CHROMATIC_PROJECT_TOKEN in repository secrets to enable cloud visual review."
-
       - name: Chromatic cloud run
-        if: ${{ secrets.CHROMATIC_PROJECT_TOKEN != '' }}
         env:
           CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
-        run: npx chromatic --project-token "$CHROMATIC_PROJECT_TOKEN" --exit-zero-on-changes
+        run: |
+          if [ -z "$CHROMATIC_PROJECT_TOKEN" ]; then
+            echo "::notice title=Chromatic disabled::Set CHROMATIC_PROJECT_TOKEN in repository secrets to enable cloud visual review."
+            exit 0
+          fi
+          npx chromatic --project-token "$CHROMATIC_PROJECT_TOKEN" --exit-zero-on-changes
