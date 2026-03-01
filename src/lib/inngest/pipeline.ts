@@ -15,6 +15,7 @@ import { indexVideo } from '@/lib/indexing/orchestrator';
 import { z } from 'zod';
 import { triggerImportCompletedEmail, triggerImportFailedEmail } from '@/lib/email/triggers';
 import { requestKimiStructuredArray, requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
+import { syncCreatorTopicGraph, syncVideoIntelligence } from '@/lib/ai/topic-graph';
 import {
     beginPipelineRun,
     completePipelineRun,
@@ -588,6 +589,32 @@ export const scrapePipeline = inngest.createFunction(
 
                 log.info('Pipeline step 4 complete', {
                     creatorId, runId, clusters: clusterRows.length,
+                });
+
+                const videoIntelligenceCount = await syncVideoIntelligence({
+                    supabase,
+                    creatorId,
+                    transcriptRows: transcriptRows.map((row) => ({
+                        creator_id: row.creator_id,
+                        video_id: row.video_id,
+                        title: row.title,
+                        description: row.description,
+                        transcript_text: row.transcript_text,
+                        views: row.views || 0,
+                    })),
+                });
+
+                const topicGraphCount = await syncCreatorTopicGraph({
+                    supabase,
+                    creatorId,
+                    creatorDisplayName: handle,
+                });
+
+                log.info('Pipeline step 4A complete: transcript intelligence + topic graph', {
+                    creatorId,
+                    runId,
+                    videoIntelligenceCount,
+                    topicGraphCount,
                 });
 
                 return clusters.map((c) => c.label);

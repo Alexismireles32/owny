@@ -16,10 +16,10 @@ interface ProductBuilderProps {
 
 interface ChatMessage {
     id: string;
-    role: 'user' | 'assistant' | 'status';
+    role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
-    topicSuggestions?: { topic: string; videoCount: number }[];
+    topicSuggestions?: { topic: string; videoCount: number; problem?: string; promise?: string }[];
     productType?: string;
 }
 
@@ -40,6 +40,13 @@ interface VersionSnapshot {
 interface SourceVideo {
     title: string;
     views: number;
+}
+
+interface LiveStatusState {
+    phase: string;
+    headline: string;
+    detail?: string;
+    tone: 'working' | 'success' | 'error';
 }
 
 const SUGGESTIONS = [
@@ -88,9 +95,9 @@ function normalizeTextToken(value: string): string {
 }
 
 function filterTopicSuggestions(
-    rawTopics: { topic: string; videoCount: number }[],
+    rawTopics: { topic: string; videoCount: number; problem?: string; promise?: string }[],
     displayName: string
-): { topic: string; videoCount: number }[] {
+): { topic: string; videoCount: number; problem?: string; promise?: string }[] {
     const displayNameTokens = normalizeTextToken(displayName)
         .split(/\s+/)
         .filter((token) => token.length >= 3);
@@ -129,12 +136,90 @@ function loadPersistedMessages(creatorId: string): ChatMessage[] {
         const parsed = JSON.parse(saved) as { messages?: ChatMessage[] };
         if (!Array.isArray(parsed.messages)) return [];
 
-        return parsed.messages.map((m) => ({
-            ...m,
-            timestamp: new Date(m.timestamp),
-        }));
+        return parsed.messages
+            .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
+            .map((m) => ({
+                ...m,
+                timestamp: new Date(m.timestamp),
+            }));
     } catch {
         return [];
+    }
+}
+
+function getFriendlyPhaseLabel(phase: string): string {
+    switch (normalizePhase(phase)) {
+        case 'analyzing':
+            return 'Analyzing';
+        case 'retrieving':
+            return 'Selecting';
+        case 'planning':
+            return 'Planning';
+        case 'building':
+            return 'Designing';
+        case 'saving':
+            return 'Saving';
+        default:
+            return 'Working';
+    }
+}
+
+function buildFriendlyStatus(message: string, phase: string, isImprove: boolean): LiveStatusState {
+    const normalizedPhase = normalizePhase(phase);
+    const lower = message.toLowerCase();
+
+    if (lower.includes('critic')) {
+        return {
+            phase: normalizedPhase,
+            headline: isImprove ? 'Polishing the updated draft' : 'Polishing the draft',
+            detail: 'Checking clarity, structure, and finish before saving.',
+            tone: 'working',
+        };
+    }
+
+    switch (normalizedPhase) {
+        case 'analyzing':
+            return {
+                phase: normalizedPhase,
+                headline: 'Reviewing your content library',
+                detail: 'Looking for the strongest source material for this product.',
+                tone: 'working',
+            };
+        case 'retrieving':
+            return {
+                phase: normalizedPhase,
+                headline: 'Picking the strongest source clips',
+                detail: 'Prioritizing the most useful videos and transcript moments.',
+                tone: 'working',
+            };
+        case 'planning':
+            return {
+                phase: normalizedPhase,
+                headline: isImprove ? 'Planning the revision' : 'Planning the product structure',
+                detail: 'Shaping the angle, flow, and content structure before writing.',
+                tone: 'working',
+            };
+        case 'building':
+            return {
+                phase: normalizedPhase,
+                headline: isImprove ? 'Applying your changes' : 'Designing the draft',
+                detail: 'Building the product and refining the visual structure.',
+                tone: 'working',
+            };
+        case 'saving':
+            return {
+                phase: normalizedPhase,
+                headline: isImprove ? 'Saving your changes' : 'Saving your draft',
+                detail: 'Wrapping up the latest version.',
+                tone: 'working',
+            };
+        default:
+            return {
+                phase: normalizedPhase,
+                headline: isImprove ? 'Updating the product' : 'Working on the product',
+                detail: message,
+                tone: 'working',
+            };
     }
 }
 
@@ -152,15 +237,19 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const [composerError, setComposerError] = useState<string | null>(null);
     const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
     const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'published'>('idle');
+    const [liveStatus, setLiveStatus] = useState<LiveStatusState | null>(null);
 
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const messageCounterRef = useRef(messages.length);
     const sectionCountRef = useRef(0);
+    const shouldAutoScrollRef = useRef(true);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const container = messagesContainerRef.current;
+        if (!container || !shouldAutoScrollRef.current) return;
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     }, [messages]);
 
     useEffect(() => {
@@ -188,8 +277,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const stopActiveBuild = useCallback(() => {
         abortRef.current?.abort();
         setBuildState((s) => ({ ...s, isBuilding: false }));
-        addMessage({ role: 'status', content: 'Build canceled. You can edit your prompt and run again.' });
-    }, [addMessage]);
+        setLiveStatus({
+            phase: 'idle',
+            headline: 'Generation stopped',
+            detail: 'You can adjust the prompt and run it again.',
+            tone: 'error',
+        });
+    }, []);
 
     const handleStream = useCallback(
         async (url: string, body: Record<string, unknown>, isImprove = false) => {
@@ -199,6 +293,8 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
             setBuildState((s) => ({ ...s, isBuilding: true, phase: 'init', ...(isImprove ? {} : { html: '' }) }));
             setComposerError(null);
+            setLiveStatus(buildFriendlyStatus('Working...', 'init', isImprove));
+            sectionCountRef.current = 0;
 
             try {
                 const res = await fetch(url, {
@@ -214,6 +310,12 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     addMessage({ role: 'assistant', content: `Error: ${message}` });
                     setComposerError(message);
                     setBuildState((s) => ({ ...s, isBuilding: false }));
+                    setLiveStatus({
+                        phase: 'error',
+                        headline: 'Could not start the request',
+                        detail: message,
+                        tone: 'error',
+                    });
                     return;
                 }
 
@@ -223,6 +325,12 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     addMessage({ role: 'assistant', content: `Error: ${message}` });
                     setComposerError(message);
                     setBuildState((s) => ({ ...s, isBuilding: false }));
+                    setLiveStatus({
+                        phase: 'error',
+                        headline: 'Could not start the request',
+                        detail: message,
+                        tone: 'error',
+                    });
                     return;
                 }
 
@@ -246,8 +354,9 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
                             if (eventType === 'status') {
                                 const statusMessage = typeof event.message === 'string' ? event.message : 'Working...';
-                                addMessage({ role: 'status', content: statusMessage });
-                                setBuildState((s) => ({ ...s, phase: typeof event.phase === 'string' ? event.phase : s.phase }));
+                                const nextPhase = typeof event.phase === 'string' ? event.phase : '';
+                                setBuildState((s) => ({ ...s, phase: nextPhase || s.phase }));
+                                setLiveStatus(buildFriendlyStatus(statusMessage, nextPhase || buildState.phase || 'init', isImprove));
                                 continue;
                             }
 
@@ -256,7 +365,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                     ? event.message
                                     : 'Choose one topic to focus your product.';
                                 const rawTopics = Array.isArray(event.topics)
-                                    ? (event.topics as { topic: string; videoCount: number }[])
+                                    ? (event.topics as { topic: string; videoCount: number; problem?: string; promise?: string }[])
                                     : [];
                                 const topicSuggestions = filterTopicSuggestions(rawTopics, displayName);
                                 addMessage({
@@ -267,16 +376,24 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 });
                                 setBuildState((s) => ({ ...s, isBuilding: false }));
                                 setPendingProductType(typeof event.productType === 'string' ? event.productType : null);
+                                setLiveStatus({
+                                    phase: 'analyzing',
+                                    headline: 'Choose the topic to focus',
+                                    detail: 'Pick one direction and the draft will be built from that part of the library.',
+                                    tone: 'working',
+                                });
                                 continue;
                             }
 
                             if (eventType === 'source_videos') {
                                 const videos = Array.isArray(event.videos) ? event.videos as SourceVideo[] : [];
                                 if (videos.length > 0) {
-                                    addMessage({
-                                        role: 'status',
-                                        content: `Using ${videos.length} videos: ${videos.slice(0, 3).map((v) => `"${v.title}"`).join(', ')}${videos.length > 3 ? ` +${videos.length - 3} more` : ''}`,
-                                    });
+                                    setLiveStatus((current) => ({
+                                        phase: 'retrieving',
+                                        headline: current?.headline || 'Selecting the strongest source videos',
+                                        detail: `Using ${videos.length} source videos to ground the draft.`,
+                                        tone: 'working',
+                                    }));
                                 }
                                 continue;
                             }
@@ -288,14 +405,15 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 const currentSections = sectionMatches ? sectionMatches.length : 0;
                                 if (currentSections > sectionCountRef.current) {
                                     sectionCountRef.current = currentSections;
-                                    // Extract the latest section title
                                     const lastH2 = htmlStr.match(/<h2[^>]*>([^<]{3,60})/gi);
                                     if (lastH2 && lastH2.length > 0) {
                                         const titleText = lastH2[lastH2.length - 1].replace(/<[^>]*>/g, '').trim();
                                         if (titleText) {
-                                            addMessage({
-                                                role: 'status',
-                                                content: `Writing section ${currentSections}: ${titleText}...`,
+                                            setLiveStatus({
+                                                phase: 'building',
+                                                headline: isImprove ? 'Updating the draft layout and content' : 'Designing the draft',
+                                                detail: `Working on section ${currentSections}: ${titleText}`,
+                                                tone: 'working',
                                             });
                                         }
                                     }
@@ -309,7 +427,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
                             if (eventType === 'complete') {
                                 const videosUsed = typeof event.videosUsed === 'number' ? event.videosUsed : null;
-                                const qualityScore = typeof event.qualityScore === 'number' ? event.qualityScore : null;
                                 const title = typeof event.title === 'string' ? event.title : 'Your product';
                                 setBuildState((s) => {
                                     // Save version for undo
@@ -330,11 +447,23 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 });
 
                                 if (isImprove) {
-                                    addMessage({ role: 'assistant', content: 'Changes applied. Continue refining with another instruction.' });
+                                    addMessage({ role: 'assistant', content: 'Updated. The latest changes are now in the draft.' });
+                                    setLiveStatus({
+                                        phase: 'complete',
+                                        headline: 'Changes saved',
+                                        detail: 'Keep refining the draft or publish when it feels ready.',
+                                        tone: 'success',
+                                    });
                                 } else {
                                     addMessage({
                                         role: 'assistant',
-                                        content: `"${title}" is ready.${videosUsed ? ` Built from ${videosUsed} top videos.` : ''}${qualityScore !== null ? ` Quality score: ${qualityScore}/100.` : ''} Keep iterating in the chat to sharpen the final version.`,
+                                        content: `"${title}" is ready.${videosUsed ? ` Built from ${videosUsed} source videos.` : ''} You can now refine the draft or publish it when it feels right.`,
+                                    });
+                                    setLiveStatus({
+                                        phase: 'complete',
+                                        headline: 'Draft ready',
+                                        detail: 'The product is saved and ready for another round of edits or publishing.',
+                                        tone: 'success',
                                     });
                                     onProductCreated();
                                 }
@@ -346,6 +475,12 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 addMessage({ role: 'assistant', content: `Error: ${message}` });
                                 setComposerError(message);
                                 setBuildState((s) => ({ ...s, isBuilding: false }));
+                                setLiveStatus({
+                                    phase: 'error',
+                                    headline: 'Could not finish this request',
+                                    detail: message,
+                                    tone: 'error',
+                                });
                             }
                         } catch {
                             // Ignore malformed stream chunks.
@@ -358,10 +493,16 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     addMessage({ role: 'assistant', content: `Error: ${message}` });
                     setComposerError(message);
                     setBuildState((s) => ({ ...s, isBuilding: false }));
+                    setLiveStatus({
+                        phase: 'error',
+                        headline: 'Connection lost',
+                        detail: message,
+                        tone: 'error',
+                    });
                 }
             }
         },
-        [addMessage, displayName, onProductCreated]
+        [addMessage, buildState.phase, displayName, onProductCreated]
     );
 
     const handleTopicSelect = useCallback(
@@ -384,6 +525,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
             addMessage({ role: 'user', content: text });
             setInput('');
+            setLiveStatus(null);
 
             if (buildState.productId && buildState.html) {
                 handleStream(
@@ -414,8 +556,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
         const prev = versionHistory[versionHistory.length - 1];
         setBuildState((s) => ({ ...s, html: prev.html, versionId: prev.versionId }));
         setVersionHistory((h) => h.slice(0, -1));
-        addMessage({ role: 'status', content: `Reverted to ${prev.label}` });
-    }, [versionHistory, addMessage]);
+        setLiveStatus({
+            phase: 'complete',
+            headline: 'Draft reverted',
+            detail: `Restored ${prev.label}.`,
+            tone: 'success',
+        });
+    }, [versionHistory]);
 
     const handlePublish = useCallback(async () => {
         if (!buildState.productId) return;
@@ -425,10 +572,22 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
             if (res.ok) {
                 setPublishStatus('published');
                 addMessage({ role: 'assistant', content: 'Product published. It is now live on your storefront.' });
+                setLiveStatus({
+                    phase: 'complete',
+                    headline: 'Published',
+                    detail: 'The product is now live on your storefront.',
+                    tone: 'success',
+                });
                 onProductCreated();
             } else {
                 setPublishStatus('idle');
                 addMessage({ role: 'assistant', content: 'Could not publish. Please try again.' });
+                setLiveStatus({
+                    phase: 'error',
+                    headline: 'Publish failed',
+                    detail: 'Please retry after reviewing the draft.',
+                    tone: 'error',
+                });
             }
         } catch {
             setPublishStatus('idle');
@@ -440,6 +599,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
         setBuildState({ productId: null, versionId: null, html: '', isBuilding: false, phase: '' });
         setVersionHistory([]);
         setPublishStatus('idle');
+        setLiveStatus(null);
         localStorage.removeItem(`owny-builder-${creatorId}`);
     }, [creatorId]);
 
@@ -542,7 +702,43 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 )}
                             </div>
 
-                            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+                            {liveStatus && (
+                                <div className="border-b border-slate-200 bg-white px-3 py-3">
+                                    <div
+                                        className={cn(
+                                            'rounded-2xl border px-3 py-3',
+                                            liveStatus.tone === 'working' && 'border-sky-200 bg-sky-50/80',
+                                            liveStatus.tone === 'success' && 'border-emerald-200 bg-emerald-50/80',
+                                            liveStatus.tone === 'error' && 'border-rose-200 bg-rose-50/80'
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                                    {getFriendlyPhaseLabel(liveStatus.phase)}
+                                                </p>
+                                                <p className="mt-1 text-sm font-medium text-slate-900">{liveStatus.headline}</p>
+                                                {liveStatus.detail && (
+                                                    <p className="mt-1 text-xs leading-5 text-slate-600">{liveStatus.detail}</p>
+                                                )}
+                                            </div>
+                                            {liveStatus.tone === 'working' && (
+                                                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-sky-500 animate-pulse" />
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div
+                                ref={messagesContainerRef}
+                                className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3"
+                                onScroll={(event) => {
+                                    const container = event.currentTarget;
+                                    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+                                    shouldAutoScrollRef.current = distanceFromBottom < 72;
+                                }}
+                            >
                                 {messages.map((msg) => {
                                     const cleanContent = sanitizeMessageText(msg.content);
                                     const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
@@ -552,8 +748,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                 className={cn(
                                                     'max-w-[92%] rounded-lg border px-3 py-2 text-[13px] leading-5',
                                                     msg.role === 'user' && 'ml-auto rounded-br-sm border-slate-900 bg-slate-900 text-white',
-                                                    msg.role === 'assistant' && 'mr-auto rounded-bl-sm border-slate-200 bg-white text-slate-900',
-                                                    msg.role === 'status' && 'mx-auto border-slate-300 bg-slate-100 text-slate-600'
+                                                    msg.role === 'assistant' && 'mr-auto rounded-bl-sm border-slate-200 bg-white text-slate-900'
                                                 )}
                                             >
                                                 {lines.length === 0
@@ -566,19 +761,25 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                             </div>
 
                                             {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
-                                                <div className="flex flex-wrap gap-1.5">
+                                                <div className="grid grid-cols-1 gap-2">
                                                     {msg.topicSuggestions.map((topic) => (
                                                         <Button
                                                             key={topic.topic}
                                                             type="button"
-                                                            size="xs"
                                                             variant="outline"
-                                                            className="h-6 rounded-full border-slate-300 bg-white px-2.5 text-[11px] text-slate-700"
+                                                            className="h-auto items-start justify-between rounded-2xl border-slate-300 bg-white px-3 py-3 text-left text-slate-700"
                                                             onClick={() => handleTopicSelect(topic.topic)}
                                                             disabled={buildState.isBuilding}
                                                         >
-                                                            {topic.topic}
-                                                            <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                                                            <div className="min-w-0 pr-3">
+                                                                <p className="text-sm font-medium text-slate-900">{topic.topic}</p>
+                                                                {topic.problem && (
+                                                                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                                                                        {topic.problem}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                            <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-[10px]">
                                                                 {topic.videoCount}
                                                             </Badge>
                                                         </Button>
@@ -588,7 +789,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                         </div>
                                     );
                                 })}
-                                <div ref={messagesEndRef} />
                             </div>
                         </section>
 

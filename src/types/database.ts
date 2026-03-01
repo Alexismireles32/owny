@@ -193,6 +193,27 @@ export interface ClipCardRow {
     created_at: string;
 }
 
+export interface VideoIntelligence {
+    id: string;
+    creator_id: string;
+    video_id: string;
+    transcript_checksum: string;
+    semantic_title: string | null;
+    semantic_abstract: string | null;
+    problem_statements: string[];
+    outcome_statements: string[];
+    audience_signals: string[];
+    theme_phrases: string[];
+    action_steps: string[];
+    evidence_quotes: string[];
+    recommended_product_types: string[];
+    product_angle: string | null;
+    confidence_score: number;
+    metadata: Record<string, unknown> | null;
+    created_at: string;
+    updated_at: string;
+}
+
 // ---- CONTENT CLUSTERS ----
 
 export interface ContentCluster {
@@ -207,6 +228,25 @@ export interface ContentCluster {
     recommended_product_type: string | null;
     confidence_score: number;
     created_at: string;
+}
+
+export interface CreatorTopicGraphNode {
+    id: string;
+    creator_id: string;
+    topic_key: string;
+    topic_label: string;
+    problem_statement: string | null;
+    promise_statement: string | null;
+    audience_fit: string | null;
+    supporting_video_ids: string[];
+    supporting_chunk_refs: Record<string, unknown>[] | null;
+    evidence_quotes: string[];
+    recommended_product_types: string[];
+    source_video_count: number;
+    confidence_score: number;
+    metadata: Record<string, unknown> | null;
+    created_at: string;
+    updated_at: string;
 }
 
 // ---- PRODUCTS ----

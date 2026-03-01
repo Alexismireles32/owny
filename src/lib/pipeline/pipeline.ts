@@ -17,6 +17,7 @@ import { chunkAndStoreTranscript } from '@/lib/indexing/chunker';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 import { requestKimiStructuredArray, requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
+import { syncCreatorTopicGraph, syncVideoIntelligence } from '@/lib/ai/topic-graph';
 
 type PipelineProductType = ProductType;
 
@@ -584,6 +585,31 @@ Return ONLY valid JSON array:
         log.info('Pipeline 2 complete', {
             creatorId,
             clusters: clusterRows.length,
+        });
+
+        const videoIntelligenceCount = await syncVideoIntelligence({
+            supabase,
+            creatorId,
+            transcriptRows: dedupedRows.map((row) => ({
+                creator_id: row.creator_id,
+                video_id: row.video_id,
+                title: row.title,
+                description: row.description,
+                transcript_text: row.transcript_text,
+                views: row.views || 0,
+            })),
+        });
+
+        const topicGraphCount = await syncCreatorTopicGraph({
+            supabase,
+            creatorId,
+            creatorDisplayName: handle,
+        });
+
+        log.info('Pipeline 2A complete: transcript intelligence + topic graph', {
+            creatorId,
+            videoIntelligenceCount,
+            topicGraphCount,
         });
 
         // ═══ STAGE 3: Extract Visual DNA + Voice + Brand Tokens ═══

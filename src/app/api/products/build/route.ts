@@ -15,6 +15,11 @@ import {
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
 import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
 import { runKimiSectionedProductPipeline } from '@/lib/ai/kimi-product-pipeline';
+import {
+    synthesizeTranscriptDrivenTopics,
+    type TopicDiscoveryTranscriptRow,
+} from '@/lib/ai/topic-discovery';
+import { loadRankedTopicSuggestionsFromGraph } from '@/lib/ai/topic-graph';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 
@@ -65,6 +70,9 @@ interface TopicClusterRow {
 interface TopicSuggestionRow {
     topic: string;
     videoCount: number;
+    problem?: string;
+    promise?: string;
+    supportingVideoIds?: string[];
 }
 
 const TOPIC_STOPWORDS = new Set([
@@ -334,6 +342,33 @@ function buildTopicSuggestions(input: {
     }
 
     return deduped;
+}
+
+async function loadFullTranscriptLibrary(
+    db: ReturnType<typeof getServiceDb>,
+    creatorId: string
+): Promise<TopicDiscoveryTranscriptRow[]> {
+    const batchSize = 200;
+    const rows: TopicDiscoveryTranscriptRow[] = [];
+
+    for (let from = 0; ; from += batchSize) {
+        const { data, error } = await db
+            .from('video_transcripts')
+            .select('video_id, title, description, transcript_text, views')
+            .eq('creator_id', creatorId)
+            .range(from, from + batchSize - 1);
+
+        if (error) {
+            throw new Error(`Failed to load transcript library: ${error.message}`);
+        }
+
+        const batch = (data || []) as TopicDiscoveryTranscriptRow[];
+        if (batch.length === 0) break;
+        rows.push(...batch);
+        if (batch.length < batchSize) break;
+    }
+
+    return rows;
 }
 
 function scoreTextMatch(text: string, tokens: string[]): number {
@@ -612,26 +647,84 @@ export async function POST(request: Request) {
 
                 // If prompt is vague, suggest topics
                 if (isVague && !body.confirmedTopic) {
-                    const { data: clusterRows } = await db
-                        .from('content_clusters')
-                        .select('label, video_count, confidence_score, total_views, video_ids')
-                        .eq('creator_id', creator.id)
-                        .order('total_views', { ascending: false })
-                        .limit(8);
-
-                    const topTopics = buildTopicSuggestions({
-                        searchResults,
-                        clusterRows: (clusterRows || []) as TopicClusterRow[],
-                        creator: {
-                            handle: creator.handle,
-                            display_name: creator.display_name,
-                        },
+                    send({
+                        type: 'status',
+                        message: '🧠 Reviewing transcript themes across your full library...',
+                        phase: 'analyzing',
                     });
+
+                    let topTopics: TopicSuggestionRow[] = [];
+                    let usedPersistentTopicGraph = false;
+
+                    try {
+                        topTopics = await loadRankedTopicSuggestionsFromGraph({
+                            supabase: db,
+                            creatorId: creator.id,
+                            productType,
+                        });
+                        usedPersistentTopicGraph = topTopics.length > 0;
+                    } catch (error) {
+                        log.warn('Persistent topic graph lookup failed; falling back to transcript synthesis', {
+                            creatorId: creator.id,
+                            error: error instanceof Error ? error.message : 'Unknown topic graph error',
+                        });
+                    }
+
+                    const transcriptLibrary = topTopics.length > 0
+                        ? []
+                        : await loadFullTranscriptLibrary(db, creator.id);
+
+                    try {
+                        if (topTopics.length === 0 && transcriptLibrary.length > 0) {
+                            const synthesizedTopics = await synthesizeTranscriptDrivenTopics({
+                                creator: {
+                                    handle: creator.handle,
+                                    display_name: creator.display_name,
+                                },
+                                productType,
+                                transcripts: transcriptLibrary,
+                            });
+
+                            topTopics = synthesizedTopics
+                                .filter((row) => row.topic.trim().length >= 4)
+                                .map((row) => ({
+                                    topic: row.topic.trim(),
+                                    videoCount: row.videoCount,
+                                    problem: row.problem,
+                                    promise: row.promise,
+                                    supportingVideoIds: row.supportingVideoIds,
+                                }));
+                        }
+                    } catch (error) {
+                        log.warn('Transcript-driven topic synthesis failed; using heuristic fallback', {
+                            creatorId: creator.id,
+                            error: error instanceof Error ? error.message : 'Unknown topic synthesis error',
+                        });
+                    }
+
+                    if (topTopics.length === 0) {
+
+                        const { data: clusterRows } = await db
+                            .from('content_clusters')
+                            .select('label, video_count, confidence_score, total_views, video_ids')
+                            .eq('creator_id', creator.id)
+                            .order('total_views', { ascending: false })
+                            .limit(8);
+
+                        topTopics = buildTopicSuggestions({
+                            searchResults,
+                            clusterRows: (clusterRows || []) as TopicClusterRow[],
+                            creator: {
+                                handle: creator.handle,
+                                display_name: creator.display_name,
+                            },
+                        });
+                    }
 
                     if (topTopics.length > 0) {
                         send({
                             type: 'topic_suggestions',
-                            message: `I found ${searchResults.length} videos in your library. What topic should this ${productType === 'pdf_guide' ? 'guide' : productType === 'mini_course' ? 'course' : productType === 'challenge_7day' ? 'challenge' : 'toolkit'} focus on?`,
+                            message: `I reviewed ${usedPersistentTopicGraph ? 'your full transcript library' : `${transcriptLibrary.length || searchResults.length} videos in your library`}. Which direction should this ${productType === 'pdf_guide' ? 'guide' : productType === 'mini_course' ? 'course' : productType === 'challenge_7day' ? 'challenge' : 'toolkit'} focus on?`,
                             topics: topTopics,
                             productType,
                         });
