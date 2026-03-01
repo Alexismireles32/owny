@@ -3,9 +3,8 @@
 
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY || '');
-
 const FROM_EMAIL = process.env.EMAIL_FROM || 'Owny <noreply@owny.store>';
+const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
 
 interface SendEmailOptions {
     to: string;
@@ -15,6 +14,12 @@ interface SendEmailOptions {
 }
 
 export async function sendEmail({ to, subject, html, replyTo }: SendEmailOptions) {
+    if (!RESEND_API_KEY) {
+        return { success: false, error: new Error('RESEND_API_KEY is not configured') };
+    }
+
+    const resend = new Resend(RESEND_API_KEY);
+
     try {
         const { data, error } = await resend.emails.send({
             from: FROM_EMAIL,

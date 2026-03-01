@@ -183,6 +183,15 @@ async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string
     }
 }
 
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function normalizeArchitectPlan(
     plan: ArchitectPlan,
     contexts: KimiPipelineContext[],
@@ -412,15 +421,7 @@ Return the section HTML now.`,
     };
 }
 
-const KimiPageShellSchema = z.object({
-    bodyClasses: z.string().default('min-h-screen bg-slate-50 text-slate-950'),
-    backgroundHtml: z.string().default(''),
-    heroHtml: z.string().default(''),
-    navHtml: z.string().default(''),
-    footerHtml: z.string().default(''),
-});
-
-async function buildPageShell(input: {
+function buildPageShell(input: {
     productType: ProductType;
     productTitle: string;
     creatorDisplayName: string;
@@ -428,58 +429,62 @@ async function buildPageShell(input: {
     creatorDna: CreatorDNA;
     creativeDirection: CreativeDirection;
     architectPlan: ArchitectPlan;
-}): Promise<KimiPageShell> {
-    const sectionMap = input.architectPlan.sections
-        .map((section) => `- ${section.id}: ${section.title} | ${section.objective}`)
+}): KimiPageShell {
+    const title = escapeHtml(input.architectPlan.title || input.productTitle);
+    const subtitle = escapeHtml(input.architectPlan.subtitle || input.creativeDirection.narrativeAngle);
+    const eyebrow = escapeHtml(input.architectPlan.shell.eyebrow);
+    const signatureMove = escapeHtml(
+        input.creativeDirection.signatureMoves[0] || input.architectPlan.shell.composerNotes
+    );
+    const navLinks = input.architectPlan.sections
+        .map((section) => {
+            const sectionTitle = escapeHtml(section.title);
+            return `<a href="#${section.id}" class="rounded-full border border-slate-200 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900">${sectionTitle}</a>`;
+        })
+        .join('\n');
+    const takeaways = input.architectPlan.keyTakeaways
+        .slice(0, 3)
+        .map((item) => `<li class="rounded-2xl border border-white/70 bg-white/72 px-3 py-2 text-sm text-slate-600 shadow-sm backdrop-blur">${escapeHtml(item)}</li>`)
         .join('\n');
 
-    return requestKimiStructuredObject({
-        systemPrompt: `You are the Owny Kimi Page Shell Designer.
-Design the shell fragments for a premium creator digital product.
-Return only a JSON object.
-
-Rules:
-- Keep the experience fresh, minimal, elegant, and alive.
-- Use a clean shadcn-style Tailwind language with restrained contrast and subtle atmosphere.
-- Generate only reusable shell fragments, not the product sections themselves.
-- Each HTML fragment must be valid snippet HTML only. No markdown fences.`,
-        userPrompt: `PRODUCT TYPE: ${input.productType}
-PRODUCT TITLE: ${input.productTitle}
-CREATOR: ${input.creatorDisplayName} (@${input.creatorHandle})
-CREATIVE DIRECTION: ${input.creativeDirection.name} (${input.creativeDirection.id})
-CREATOR MOOD: ${input.creatorDna.visual.mood}
-PRIMARY COLOR: ${input.creatorDna.visual.primaryColor}
-SECONDARY COLOR: ${input.creatorDna.visual.secondaryColor}
-TYPOGRAPHY DNA: ${input.creativeDirection.typographyDNA}
-LAYOUT DNA: ${input.creativeDirection.layoutDNA}
-INTERACTION DNA: ${input.creativeDirection.interactionDNA}
-SIGNATURE MOVES: ${input.creativeDirection.signatureMoves.join(', ')}
-
-SHELL EYEBROW: ${input.architectPlan.shell.eyebrow}
-SHELL LAYOUT: ${input.architectPlan.shell.layoutStyle}
-SHELL NAV: ${input.architectPlan.shell.navStyle}
-SHELL VISUAL HIERARCHY: ${input.architectPlan.shell.visualHierarchy}
-SHELL INTERACTION: ${input.architectPlan.shell.interactionModel}
-COMPOSER NOTES: ${input.architectPlan.shell.composerNotes}
-
-SECTION MAP:
-${sectionMap}
-
-${productScaffoldGuidance(input.productType)}
-
-Return a JSON object with:
-- bodyClasses
-- backgroundHtml
-- heroHtml
-- navHtml
-- footerHtml
-
-The navHtml should link to the section ids in architectPlan.sections.
-The heroHtml should introduce the product with a premium creator-specific tone.`,
-        schema: KimiPageShellSchema,
-        maxTokens: 2600,
-        thinking: 'disabled',
-    });
+    return {
+        bodyClasses: 'min-h-screen bg-[var(--creator-surface)] text-[var(--creator-text)] antialiased',
+        backgroundHtml: `
+    <div class="absolute inset-0 -z-10 overflow-hidden">
+      <div class="absolute left-[-8rem] top-[-7rem] h-64 w-64 rounded-full blur-3xl opacity-35" style="background: color-mix(in srgb, var(--creator-primary) 72%, white);"></div>
+      <div class="absolute right-[-6rem] top-20 h-72 w-72 rounded-full blur-3xl opacity-25" style="background: color-mix(in srgb, var(--creator-secondary) 68%, white);"></div>
+      <div class="absolute inset-x-0 top-0 h-80 bg-gradient-to-b from-white/72 via-white/35 to-transparent"></div>
+      <div class="absolute inset-0 opacity-[0.16]" style="background-image: radial-gradient(circle at 1px 1px, rgba(15,23,42,0.12) 1px, transparent 0); background-size: 26px 26px;"></div>
+    </div>`.trim(),
+        heroHtml: `
+      <section class="overflow-hidden rounded-[32px] border border-white/80 bg-white/78 px-6 py-7 shadow-soft backdrop-blur sm:px-8 sm:py-9">
+        <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div class="max-w-3xl">
+            <div class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-600 shadow-sm">${eyebrow}</div>
+            <h1 class="mt-4 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">${title}</h1>
+            <p class="mt-4 max-w-2xl text-base leading-8 text-slate-600 sm:text-lg">${subtitle}</p>
+          </div>
+          <div class="max-w-sm rounded-[28px] border border-slate-200 bg-white/88 p-5 shadow-sm">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Creator signal</p>
+            <p class="mt-3 text-sm leading-7 text-slate-700">Built from ${escapeHtml(input.creatorDisplayName)}'s real library with a ${escapeHtml(input.creativeDirection.name.toLowerCase())} art direction. ${signatureMove}</p>
+          </div>
+        </div>
+        ${takeaways ? `<ul class="mt-6 grid gap-2 sm:grid-cols-3">${takeaways}</ul>` : ''}
+      </section>`.trim(),
+        navHtml: `
+      <nav class="sticky top-4 z-20 mt-5 overflow-x-auto pb-1">
+        <div class="flex min-w-max items-center gap-2 rounded-full border border-white/80 bg-white/72 px-3 py-2 shadow-sm backdrop-blur">
+          ${navLinks}
+        </div>
+      </nav>`.trim(),
+        footerHtml: `
+      <footer class="mt-8 rounded-[28px] border border-white/80 bg-white/72 px-5 py-5 text-sm text-slate-600 shadow-sm backdrop-blur">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p>Crafted from @${escapeHtml(input.creatorHandle)} with Owny Studio.</p>
+          <p class="text-slate-500">${escapeHtml(productScaffoldGuidance(input.productType))}</p>
+        </div>
+      </footer>`.trim(),
+    };
 }
 
 function assembleProductHtml(input: {
@@ -608,19 +613,15 @@ export async function runKimiSectionedProductPipeline(input: {
     stageTimingsMs.sections = Date.now() - sectionsStart;
 
     const shellStart = Date.now();
-    const pageShell = await withTimeout(
-        buildPageShell({
-            productType: input.productType,
-            productTitle: input.productTitle,
-            creatorDisplayName: input.creatorDisplayName,
-            creatorHandle: input.creatorHandle,
-            creatorDna: input.creatorDna,
-            creativeDirection: input.creativeDirection,
-            architectPlan,
-        }),
-        50_000,
-        'Kimi page shell'
-    );
+    const pageShell = buildPageShell({
+        productType: input.productType,
+        productTitle: input.productTitle,
+        creatorDisplayName: input.creatorDisplayName,
+        creatorHandle: input.creatorHandle,
+        creatorDna: input.creatorDna,
+        creativeDirection: input.creativeDirection,
+        architectPlan,
+    });
     stageTimingsMs.shell = Date.now() - shellStart;
 
     const html = assembleProductHtml({

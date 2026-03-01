@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
     const { data: product } = await supabase
         .from('products')
-        .select('title, description, type, creators(display_name)')
+        .select('title, description, type, creators!products_creator_id_fkey(display_name)')
         .eq('slug', slug)
         .eq('status', 'published')
         .single();
@@ -64,7 +64,7 @@ export default async function ProductPage({ params }: Props) {
         .from('products')
         .select(`
             *,
-            creators(handle, display_name, avatar_url, bio, brand_tokens)
+            creators!products_creator_id_fkey(handle, display_name, avatar_url, bio, brand_tokens)
         `)
         .eq('slug', slug)
         .single();
