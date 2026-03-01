@@ -8,6 +8,7 @@ import {
     DEFAULT_KIMI_MODEL,
     type MoonshotChatCompletionRequest,
 } from '@/lib/ai/kimi';
+import { postProcessHTML } from '@/lib/ai/post-process-html';
 import { log } from '@/lib/logger';
 import { hybridSearch } from '@/lib/indexing/search';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -1029,84 +1030,6 @@ ${JSON.stringify(buildPacket, null, 2)}
 ${creatorId ? `creator_id: ${creatorId}` : ''}
 
 Generate the complete HTML document now.`;
-}
-
-// ────────────────────────────────────────
-// postProcessHTML — Sanitize and validate AI-generated HTML
-// ────────────────────────────────────────
-
-export function postProcessHTML(raw: string): string {
-    let html = raw.trim();
-
-    // 1. Strip markdown code fences if present
-    html = html.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
-
-    // 2. Ensure proper DOCTYPE
-    if (!html.toLowerCase().startsWith('<!doctype')) {
-        html = '<!DOCTYPE html>\n' + html;
-    }
-
-    // 3. Ensure Tailwind CDN is present
-    if (!html.includes('cdn.tailwindcss.com')) {
-        html = html.replace(
-            '</head>',
-            '  <script src="https://cdn.tailwindcss.com"></script>\n</head>'
-        );
-    }
-
-    // 4. Ensure viewport meta tag
-    if (!html.includes('viewport')) {
-        html = html.replace(
-            '</head>',
-            '  <meta name="viewport" content="width=device-width, initial-scale=1">\n</head>'
-        );
-    }
-
-    // 5. Ensure Inter font is loaded
-    if (!html.includes('fonts.googleapis.com') && !html.includes('Inter')) {
-        html = html.replace(
-            '</head>',
-            '  <link rel="preconnect" href="https://fonts.googleapis.com">\n  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">\n</head>'
-        );
-    }
-
-    // 6. Strip dangerous script tags (keep CDN scripts + Tailwind config + Alpine.js directives)
-    const allowedScriptPatterns = [
-        'cdn.tailwindcss.com',
-        'alpinejs',
-        'tailwind.config',
-        'fonts.googleapis.com',
-    ];
-
-    html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match) => {
-        // Allow CDN scripts and Tailwind config
-        if (allowedScriptPatterns.some(pattern => match.includes(pattern))) {
-            return match;
-        }
-        // Strip everything else
-        log.info('Post-process HTML: stripped script tag');
-        return '';
-    });
-
-    // 7. Strip inline event handlers (except Alpine.js directives)
-    html = html.replace(/\s(on\w+)="[^"]*"/gi, (match, handler) => {
-        // Keep Alpine.js @ directives (they're converted by Alpine, not inline handlers)
-        if (handler.toLowerCase().startsWith('on') && !match.includes('@')) {
-            log.info('Post-process HTML: stripped inline handler', { handler });
-            return '';
-        }
-        return match;
-    });
-
-    // 8. Strip form actions to external URLs
-    html = html.replace(/action="https?:\/\/[^"]*"/gi, 'action="#"');
-
-    // 9. Add smooth scroll to html element
-    if (!html.includes('scroll-smooth')) {
-        html = html.replace('<html', '<html class="scroll-smooth"');
-    }
-
-    return html;
 }
 
 // ────────────────────────────────────────

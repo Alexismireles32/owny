@@ -10,14 +10,17 @@ export type MoonshotChatCompletionRequest =
 export type MoonshotChatCompletionStreamingRequest =
     OpenAI.Chat.ChatCompletionCreateParamsStreaming & MoonshotThinkingConfig;
 
-/**
- * Kimi K2.5 client — uses OpenAI SDK pointed at Moonshot API.
- * All builder calls go through this client.
- */
-export const kimiClient = new OpenAI({
-    apiKey: process.env.KIMI_API_KEY,
-    baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-});
+export function getKimiClient(): OpenAI {
+    const apiKey = process.env.KIMI_API_KEY;
+    if (!apiKey) {
+        throw new Error('KIMI_API_KEY is not set');
+    }
+
+    return new OpenAI({
+        apiKey,
+        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
+    });
+}
 
 /**
  * Builder calls use Instant mode (fast, cheap).

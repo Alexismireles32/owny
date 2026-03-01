@@ -5,10 +5,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { DEFAULT_KIMI_MODEL } from '@/lib/ai/kimi';
-import { KimiBuilder, type ProductContext } from '@/lib/ai/router';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import type { DSLBlock } from '@/types/product-dsl';
+import type { ProductContext } from '@/lib/ai/router';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -59,6 +61,7 @@ export async function POST(request: Request) {
     };
 
     try {
+        const { KimiBuilder } = await import('@/lib/ai/router');
         const kimi = new KimiBuilder();
         const improved = await kimi.improveBlock(block, instruction, ctx);
         return NextResponse.json({ block: improved, model: DEFAULT_KIMI_MODEL });

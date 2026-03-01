@@ -4,12 +4,11 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { hybridSearch } from '@/lib/indexing/search';
-import { rerankCandidates } from '@/lib/ai/reranker';
-import { generateBuildPacket } from '@/lib/ai/planner';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import type { ProductType, BrandTokens } from '@/types/build-packet';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -61,6 +60,12 @@ export async function POST(request: Request) {
     }
 
     try {
+        const [{ hybridSearch }, { rerankCandidates }, { generateBuildPacket }] = await Promise.all([
+            import('@/lib/indexing/search'),
+            import('@/lib/ai/reranker'),
+            import('@/lib/ai/planner'),
+        ]);
+
         // Step 1: Hybrid retrieval — search creator's content
         const searchResults = await hybridSearch(supabase, creator.id, prompt, {
             limit: 100,

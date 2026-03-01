@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { hybridSearch } from '@/lib/indexing/search';
 import { rerankCandidates } from '@/lib/ai/reranker';
-import { postProcessHTML } from '@/lib/ai/router';
+import { postProcessHTML } from '@/lib/ai/post-process-html';
 import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
 import {
     buildDesignCanonContext,

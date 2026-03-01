@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import type { ProductType } from '@/types/build-packet';
 import { DEFAULT_KIMI_MODEL, type MoonshotChatCompletionRequest } from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
-import { postProcessHTML } from '@/lib/ai/router';
+import { postProcessHTML } from '@/lib/ai/post-process-html';
 import {
     buildQualityFeedbackForPrompt,
     evaluateProductQuality,

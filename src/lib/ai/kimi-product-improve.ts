@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ProductType } from '@/types/build-packet';
 import type { CreatorDNA } from '@/lib/ai/creator-dna';
 import { requestKimiStructuredObject, requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
-import { postProcessHTML } from '@/lib/ai/router';
+import { postProcessHTML } from '@/lib/ai/post-process-html';
 
 interface SectionSlice {
     id: string;
