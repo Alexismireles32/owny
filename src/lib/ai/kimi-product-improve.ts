@@ -3,6 +3,7 @@ import type { ProductType } from '@/types/build-packet';
 import type { CreatorDNA } from '@/lib/ai/creator-dna';
 import { requestKimiStructuredObject, requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
 import { postProcessHTML } from '@/lib/ai/post-process-html';
+import { ensureChecklistDocumentInteractivity } from '@/lib/ai/checklist-interactivity';
 
 interface SectionSlice {
     id: string;
@@ -40,6 +41,41 @@ const ImprovePlanSchema = z.object({
     shellChange: z.boolean().default(false),
     strategy: z.string().default(''),
 });
+
+const SHELL_CHANGE_PATTERNS = [
+    /\bmain page\b/i,
+    /\binitial page\b/i,
+    /\bfirst page\b/i,
+    /\bopening page\b/i,
+    /\bhero\b/i,
+    /\bheader\b/i,
+    /\bcover\b/i,
+    /\babove the fold\b/i,
+    /\blayout\b/i,
+    /\bredesign\b/i,
+    /\bpage-wide\b/i,
+    /\boverall\b/i,
+    /\bvisual\b/i,
+    /\bstyle\b/i,
+    /\btheme\b/i,
+    /\bbackground\b/i,
+    /\bnavigation\b/i,
+    /\bframing\b/i,
+];
+
+const CONTENT_CHANGE_PATTERNS = [
+    /\bcopy\b/i,
+    /\bcontent\b/i,
+    /\btext\b/i,
+    /\bwording\b/i,
+    /\bsection\b/i,
+    /\bchapter\b/i,
+    /\bmodule\b/i,
+    /\bday\b/i,
+    /\bcategory\b/i,
+    /\bchecklist item\b/i,
+    /\bparagraph\b/i,
+];
 
 function inferProductTitle(html: string): string {
     const title = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim();
@@ -104,7 +140,8 @@ Choose whether the request should:
 - touch multiple sections
 - touch the whole product
 
-Mark shellChange true only if the instruction clearly asks for overall layout, hero, navigation, framing, or page-wide style changes.`,
+Mark shellChange true if the instruction asks for any overall layout, hero, cover, initial page, header, navigation, framing, background, or page-wide style changes.
+If the user says "main page", "initial page", "first page", "cover", "hero", or asks for the page to feel very different visually, shellChange should be true.`,
         userPrompt: `PRODUCT TYPE: ${input.productType}
 INSTRUCTION: ${input.instruction}
 
@@ -146,6 +183,7 @@ Rules:
 - Preserve or include the source comment in this format: <!-- sources: video-id-1,video-id-2 -->
 - Do not change unrelated sections.
 - Keep the result premium, grounded, and creator-specific.
+- If the product type is checklist_toolkit, keep the checklist genuinely interactive when clicked. Use real checkbox inputs or an equivalent accessible toggle pattern with visible checked states.
 - No markdown fences, no full document.`,
         userPrompt: `PRODUCT TYPE: ${input.productType}
 CREATOR: ${input.creatorDisplayName} (@${input.creatorHandle})
@@ -211,6 +249,7 @@ Rules:
 - Do not invent, remove, or rewrite product sections.
 - Output the full HTML document.
 - Apply only page-level improvements such as hero, framing, navigation, layout rhythm, and atmosphere.
+- If the user asks for a bigger visual change, make a visibly different hero, header framing, navigation treatment, background atmosphere, and section staging. Do not just swap one sentence.
 - No markdown fences.`,
         userPrompt: `PRODUCT TYPE: ${input.productType}
 CREATOR: ${input.creatorDisplayName} (@${input.creatorHandle})
@@ -276,11 +315,22 @@ export async function improveProductWithKimiStages(input: KimiSectionedImproveIn
         sections,
     }));
 
+    const heuristicShellChange = SHELL_CHANGE_PATTERNS.some((pattern) => pattern.test(input.instruction));
+    const heuristicContentChange = CONTENT_CHANGE_PATTERNS.some((pattern) => pattern.test(input.instruction));
+    const shellChange = plan.shellChange || heuristicShellChange;
+    const shellOnly = shellChange && !heuristicContentChange && plan.targetSectionIds.length === 0;
+
     const availableIds = new Set(sections.map((section) => section.id));
-    const targetSectionIds = plan.scope === 'global'
+    const targetSectionIds = shellOnly
+        ? []
+        : plan.scope === 'global'
         ? sections.map((section) => section.id)
         : plan.targetSectionIds.filter((id) => availableIds.has(id));
-    const touchedSectionIds = targetSectionIds.length > 0 ? targetSectionIds : sections.map((section) => section.id);
+    const touchedSectionIds = shellOnly
+        ? []
+        : targetSectionIds.length > 0
+            ? targetSectionIds
+            : sections.map((section) => section.id);
     const touchedSet = new Set(touchedSectionIds);
 
     const improvedSectionEntries = await withTiming(
@@ -309,7 +359,7 @@ export async function improveProductWithKimiStages(input: KimiSectionedImproveIn
     const improvedSectionMap = new Map<string, string>(improvedSectionEntries);
     let html = replaceSections(input.currentHtml, improvedSectionMap, sections);
 
-    if (plan.shellChange) {
+    if (shellChange) {
         const shellHtml = withSectionPlaceholders(html, sections);
         try {
             const improvedShell = await withTiming(
@@ -334,7 +384,9 @@ export async function improveProductWithKimiStages(input: KimiSectionedImproveIn
     timings.total = Date.now() - totalStart;
 
     return {
-        html: postProcessHTML(html),
+        html: input.productType === 'checklist_toolkit'
+            ? ensureChecklistDocumentInteractivity(postProcessHTML(html))
+            : postProcessHTML(html),
         htmlBuildMode: 'kimi-improve-sectioned',
         touchedSectionIds,
         stageTimingsMs: timings,

@@ -161,6 +161,10 @@ function evaluateContentDepth(html: string, productType: ProductType): GateEvalu
         score -= 25;
         notes.push('Placeholder text detected.');
     }
+    if (productType === 'checklist_toolkit' && !(/type=["']checkbox["']|data-checklist-section=["']true["']|peer-checked:/i.test(html))) {
+        score -= 20;
+        notes.push('Checklist toolkit lacks clickable checklist controls.');
+    }
 
     score = Math.max(0, Math.min(100, score));
     return {

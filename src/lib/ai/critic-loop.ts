@@ -3,6 +3,7 @@ import type { ProductType } from '@/types/build-packet';
 import { DEFAULT_KIMI_MODEL, type MoonshotChatCompletionRequest } from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
 import { postProcessHTML } from '@/lib/ai/post-process-html';
+import { ensureChecklistDocumentInteractivity } from '@/lib/ai/checklist-interactivity';
 import {
     buildQualityFeedbackForPrompt,
     evaluateProductQuality,
@@ -132,6 +133,9 @@ export async function runEvergreenCriticLoop(input: CriticLoopInput): Promise<Cr
     const modelTrail: string[] = [];
 
     let bestHtml = postProcessHTML(input.html);
+    if (input.productType === 'checklist_toolkit') {
+        bestHtml = ensureChecklistDocumentInteractivity(bestHtml);
+    }
     let bestEvaluation = evaluateProductQuality({
         html: bestHtml,
         productType: input.productType,
@@ -172,7 +176,10 @@ export async function runEvergreenCriticLoop(input: CriticLoopInput): Promise<Cr
             preferredModel: input.preferredModel ?? 'kimi',
         });
 
-        const revisedHtml = postProcessHTML(revised.html || currentHtml);
+        let revisedHtml = postProcessHTML(revised.html || currentHtml);
+        if (input.productType === 'checklist_toolkit') {
+            revisedHtml = ensureChecklistDocumentInteractivity(revisedHtml);
+        }
         const revisedEvaluation = evaluateProductQuality({
             html: revisedHtml,
             productType: input.productType,

@@ -3,6 +3,7 @@ import type { ProductType } from '@/types/build-packet';
 import type { CreatorDNA } from '@/lib/ai/creator-dna';
 import type { CreativeDirection } from '@/lib/ai/design-canon';
 import { requestKimiStructuredObject, requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
+import { ensureChecklistDocumentInteractivity } from '@/lib/ai/checklist-interactivity';
 
 export interface KimiPipelineContext {
     videoId: string;
@@ -143,7 +144,7 @@ function productScaffoldGuidance(productType: ProductType): string {
 function sectionFormatGuidance(productType: ProductType): string {
     switch (productType) {
         case 'checklist_toolkit':
-            return 'Build the section with a short grounding paragraph, a checklist of 4-6 concrete items with one-sentence explanations, and a closing takeaway.';
+            return 'Build the section with a short grounding paragraph, a checklist of 4-6 concrete items with one-sentence explanations, and a closing takeaway. Each item must be rendered as a clickable checklist row using real checkbox controls or an equivalent accessible toggle pattern.';
         case 'mini_course':
             return 'Build the section with a concise lesson intro, 2-3 teaching blocks, and a practical action step.';
         case 'challenge_7day':
@@ -380,6 +381,7 @@ Rules:
 - Start with <!-- sources: ... --> on the line above the section.
 - The section must use the exact id provided.
 - Use clean shadcn-style Tailwind classes: rounded-2xl or rounded-[28px], border, bg-white or bg-card, shadow-sm.
+- If the product type is checklist_toolkit, the checklist must actually work when clicked. Use real checkbox inputs, labels, and visible checked states.
 - No markdown fences. No full document. No <html>, <head>, or <body>.
 - Make the section substantial and specific, but avoid fluff.`,
         userPrompt: `PRODUCT TYPE: ${input.productType}
@@ -635,7 +637,9 @@ export async function runKimiSectionedProductPipeline(input: {
     stageTimingsMs.total = Date.now() - totalStart;
 
     return {
-        html,
+        html: input.productType === 'checklist_toolkit'
+            ? ensureChecklistDocumentInteractivity(html)
+            : html,
         librarianPack,
         architectPlan,
         sectionBlocks,

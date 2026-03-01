@@ -5,6 +5,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { improveProductWithKimiStages } from '@/lib/ai/kimi-product-improve';
+import { buildCreatorDNA } from '@/lib/ai/creator-dna';
 import {
     chooseStricterImproveBaseline,
     getImproveSaveRejection,
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
     try {
         const { data: creator } = await supabase
             .from('creators')
-            .select('id, handle, display_name, brand_tokens')
+            .select('id, handle, display_name, bio, brand_tokens, voice_profile')
             .eq('profile_id', user.id)
             .single();
 
@@ -87,10 +88,17 @@ export async function POST(request: Request) {
             : [];
         let qualityWeights = parseQualityWeights(buildPacket || null);
         let creatorHandle = typeof buildPacket?.creatorHandle === 'string' ? buildPacket.creatorHandle : creator.handle;
-        let creatorDisplayName = typeof buildPacket?.title === 'string' ? buildPacket.title : 'Owny Product';
+        let creatorDisplayName = creator.display_name || creator.handle;
         let brandTokens = buildPacket?.brandTokens && typeof buildPacket.brandTokens === 'object'
             ? buildPacket.brandTokens as Record<string, unknown>
             : (creator.brand_tokens as Record<string, unknown> | null);
+        let creatorDna = buildCreatorDNA({
+            handle: creator.handle,
+            displayName: creator.display_name,
+            bio: creator.bio,
+            voiceProfile: creator.voice_profile,
+            brandTokens: creator.brand_tokens,
+        });
         let catalogHtml: string[] = [];
 
         if (productId) {
@@ -109,6 +117,13 @@ export async function POST(request: Request) {
             creatorDisplayName = creator.display_name || creator.handle;
             brandTokens = (creator.brand_tokens as Record<string, unknown> | null) || brandTokens;
             catalogHtml = await loadCreatorCatalogHtml(supabase, creator.id, { excludeProductId: productId });
+            creatorDna = buildCreatorDNA({
+                handle: creator.handle,
+                displayName: creator.display_name,
+                bio: creator.bio,
+                voiceProfile: creator.voice_profile,
+                brandTokens: creator.brand_tokens,
+            });
 
             if (product.active_version_id) {
                 const { data: version } = await supabase
@@ -131,7 +146,7 @@ export async function POST(request: Request) {
             productType: inferProductType(html, buildPacket?.productType),
             creatorDisplayName,
             creatorHandle,
-            creatorDna: null,
+            creatorDna,
         });
 
         const productType = inferProductType(html, buildPacket?.productType);
