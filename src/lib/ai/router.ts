@@ -2,9 +2,12 @@
 // PRD §4.2-4.5 + Kimi Research v2 §2,3,4,6,7 — Full Kimi agent with tools + formulas + streaming
 
 import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
 import type { BuildPacket } from '@/types/build-packet';
 import type { ProductDSL, DSLBlock, DSLPage } from '@/types/product-dsl';
+import {
+    DEFAULT_KIMI_MODEL,
+    type MoonshotChatCompletionRequest,
+} from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
 import { hybridSearch } from '@/lib/indexing/search';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -323,11 +326,11 @@ async function runAgentLoop(
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? 'auto' : undefined,
                 parallel_tool_calls: true, // Research v2 §13
+                thinking: { type: 'disabled' },
                 temperature: config.temperature,
                 top_p: 0.95,
                 max_tokens: config.maxTokens,
-            } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-            { body: { thinking: { type: 'disabled' } } }
+            } as MoonshotChatCompletionRequest
         );
 
         const choice = response.choices[0];
@@ -430,11 +433,11 @@ async function* runAgentLoopStreaming(
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? 'auto' : undefined,
                 parallel_tool_calls: true, // Research v2 §13
+                thinking: { type: 'disabled' },
                 temperature: config.temperature,
                 top_p: 0.95,
                 max_tokens: config.maxTokens,
-            } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-            { body: { thinking: { type: 'disabled' } } }
+            } as MoonshotChatCompletionRequest
         );
 
         const choice = response.choices[0];
@@ -560,7 +563,7 @@ export class KimiBuilder implements AIModelAdapter {
         const { tools: formulaTools, executors: formulaExecutors } = await getFormulaTools();
 
         return {
-            model: 'kimi-k2.5',
+            model: DEFAULT_KIMI_MODEL,
             systemPrompt: KIMI_SYSTEM_PROMPT,
             tools: [...customTools, ...formulaTools],
             toolExecutors: { ...customExecutors, ...formulaExecutors },
@@ -603,7 +606,7 @@ export class KimiBuilder implements AIModelAdapter {
     ): Promise<DSLBlock> {
         const response = await this.client.chat.completions.create(
             {
-                model: 'kimi-k2.5',
+                model: DEFAULT_KIMI_MODEL,
                 messages: [
                     { role: 'system', content: IMPROVE_SYSTEM_PROMPT },
                     {
@@ -611,73 +614,14 @@ export class KimiBuilder implements AIModelAdapter {
                         content: `Block to improve:\n${JSON.stringify(block)}\n\nInstruction: ${instruction}\n\nContext: product type = ${context.productType}, page type = ${context.pageType}`,
                     },
                 ],
+                thinking: { type: 'disabled' },
                 temperature: 0.6,
                 top_p: 0.95,
                 max_tokens: 4096,
-            } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-            { body: { thinking: { type: 'disabled' } } }
+            } as MoonshotChatCompletionRequest
         );
 
         const text = response.choices[0]?.message?.content || '';
-        const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-        return JSON.parse(jsonStr) as DSLBlock;
-    }
-}
-
-// ────────────────────────────────────────
-// ClaudeBuilder — Fallback builder
-// ────────────────────────────────────────
-
-export class ClaudeBuilder implements AIModelAdapter {
-    private client: Anthropic;
-
-    constructor() {
-        this.client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-    }
-
-    async generateDSL(buildPacket: BuildPacket): Promise<ProductDSL> {
-        const response = await this.client.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 16384,
-            system: KIMI_SYSTEM_PROMPT,
-            messages: [
-                {
-                    role: 'user',
-                    content: `Convert this Build Packet into a Product DSL JSON:\n\n${JSON.stringify(buildPacket)}`,
-                },
-            ],
-        });
-
-        const text = response.content
-            .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-            .map((b) => b.text)
-            .join('');
-
-        return parseDSLResponse(text);
-    }
-
-    async improveBlock(
-        block: DSLBlock,
-        instruction: string,
-        context: ProductContext
-    ): Promise<DSLBlock> {
-        const response = await this.client.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
-            system: IMPROVE_SYSTEM_PROMPT,
-            messages: [
-                {
-                    role: 'user',
-                    content: `Block to improve:\n${JSON.stringify(block)}\n\nInstruction: ${instruction}\n\nContext: product type = ${context.productType}, page type = ${context.pageType}`,
-                },
-            ],
-        });
-
-        const text = response.content
-            .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-            .map((b) => b.text)
-            .join('');
-
         const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
         return JSON.parse(jsonStr) as DSLBlock;
     }
@@ -945,7 +889,7 @@ export function postProcessDSL(raw: ProductDSL): ProductDSL {
 }
 
 // ────────────────────────────────────────
-// generateDSLWithRetry — Kimi (agent loop) → retry → Claude fallback
+// generateDSLWithRetry — Kimi (agent loop) with retry
 // ────────────────────────────────────────
 
 export async function generateDSLWithRetry(
@@ -953,14 +897,12 @@ export async function generateDSLWithRetry(
     creatorId?: string
 ): Promise<{ dsl: ProductDSL; model: string }> {
     const kimi = new KimiBuilder();
-    const claude = new ClaudeBuilder();
 
-    // Attempt 1: Kimi with full agent toolset
     try {
         const rawDsl = await kimi.generateDSL(buildPacket, creatorId);
         const dsl = postProcessDSL(rawDsl);
-        log.info('DSL generated', { model: 'kimi-k2.5', pages: dsl.pages?.length });
-        return { dsl, model: 'kimi-k2.5' };
+        log.info('DSL generated', { model: DEFAULT_KIMI_MODEL, pages: dsl.pages?.length });
+        return { dsl, model: DEFAULT_KIMI_MODEL };
     } catch (err1) {
         log.error('Kimi attempt 1 failed', { error: err1 instanceof Error ? err1.message : 'Unknown' });
 
@@ -968,22 +910,12 @@ export async function generateDSLWithRetry(
         try {
             const rawDsl = await kimi.generateDSL(buildPacket, creatorId);
             const dsl = postProcessDSL(rawDsl);
-            log.info('DSL generated on retry', { model: 'kimi-k2.5-retry', pages: dsl.pages?.length });
-            return { dsl, model: 'kimi-k2.5-retry' };
+            log.info('DSL generated on retry', { model: `${DEFAULT_KIMI_MODEL}-retry`, pages: dsl.pages?.length });
+            return { dsl, model: `${DEFAULT_KIMI_MODEL}-retry` };
         } catch (err2) {
-            log.error('Kimi attempt 2 failed', { error: err2 instanceof Error ? err2.message : 'Unknown' });
-
-            // Attempt 3: Claude fallback (no agent tools — simple completion)
-            try {
-                const rawDsl = await claude.generateDSL(buildPacket);
-                const dsl = postProcessDSL(rawDsl);
-                log.info('DSL generated via fallback', { model: 'claude-sonnet-4.5', pages: dsl.pages?.length });
-                return { dsl, model: 'claude-sonnet-4.5-fallback' };
-            } catch (err3) {
-                throw new Error(
-                    `All builders failed. Last error: ${err3 instanceof Error ? err3.message : 'Unknown'}`
-                );
-            }
+            throw new Error(
+                `Kimi DSL generation failed after retry. Last error: ${err2 instanceof Error ? err2.message : 'Unknown'}`
+            );
         }
     }
 }
@@ -1179,7 +1111,7 @@ export function postProcessHTML(raw: string): string {
 
 // ────────────────────────────────────────
 // generateProductWithRetry — Returns both HTML + DSL
-// Uses Claude for HTML generation (better at code than Kimi)
+// Kimi-only HTML generation
 // ────────────────────────────────────────
 
 export async function generateProductWithRetry(
@@ -1191,49 +1123,29 @@ export async function generateProductWithRetry(
     let html: string;
     let model: string;
 
-    // Attempt 1: Claude via Anthropic SDK (best at HTML/Tailwind)
     try {
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-        const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 16384,
-            system: HTML_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userContent }],
+        const kimi = new OpenAI({
+            apiKey: process.env.KIMI_API_KEY || '',
+            baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
         });
-
-        html = response.content
-            .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-            .map((b) => b.text)
-            .join('');
-        model = 'claude-sonnet-html';
-        log.info('HTML generated', { model, length: html.length });
-    } catch (err) {
-        log.error('Claude HTML generation failed', { error: err instanceof Error ? err.message : 'Unknown' });
-
-        // Attempt 2: Kimi fallback via OpenAI SDK
-        try {
-            const kimi = new OpenAI({
-                apiKey: process.env.KIMI_API_KEY || '',
-                baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-            });
-            const result = await kimi.chat.completions.create({
-                model: 'kimi-k2.5',
+        const result = await kimi.chat.completions.create(
+            {
+                model: DEFAULT_KIMI_MODEL,
                 messages: [
                     { role: 'system', content: HTML_SYSTEM_PROMPT },
                     { role: 'user', content: userContent },
                 ],
-                temperature: 0.7,
+                thinking: { type: 'disabled' },
+                temperature: 0.6,
                 max_tokens: 16000,
-            });
+            } as MoonshotChatCompletionRequest
+        );
 
-            html = result.choices[0]?.message?.content ?? '';
-            model = 'kimi-k2.5-html';
-            log.info('HTML generated via Kimi fallback', { model, length: html.length });
-        } catch (err2) {
-            throw new Error(
-                `All HTML builders failed. Last error: ${err2 instanceof Error ? err2.message : 'Unknown'}`
-            );
-        }
+        html = result.choices[0]?.message?.content ?? '';
+        model = `${DEFAULT_KIMI_MODEL}-html`;
+        log.info('HTML generated', { model, length: html.length });
+    } catch (err) {
+        throw new Error(`Kimi HTML generation failed: ${err instanceof Error ? err.message : 'Unknown'}`);
     }
 
     // Post-process HTML
@@ -1277,26 +1189,26 @@ export async function improveProductHTML(
     currentHtml: string,
     instruction: string
 ): Promise<{ html: string; model: string }> {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-
-    const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 16384,
-        system: HTML_IMPROVE_PROMPT,
-        messages: [{
-            role: 'user',
-            content: `Here is the current HTML page:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document.`,
-        }],
+    const kimi = new OpenAI({
+        apiKey: process.env.KIMI_API_KEY || '',
+        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
     });
+    const result = await kimi.chat.completions.create(
+        {
+            model: DEFAULT_KIMI_MODEL,
+            messages: [
+                { role: 'system', content: HTML_IMPROVE_PROMPT },
+                {
+                    role: 'user',
+                    content: `Here is the current HTML page:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document.`,
+                },
+            ],
+            thinking: { type: 'disabled' },
+            temperature: 0.6,
+            max_tokens: 16000,
+        } as MoonshotChatCompletionRequest
+    );
 
-    let html = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('');
-
-    html = postProcessHTML(html);
-    return { html, model: 'claude-sonnet-improve' };
+    const html = postProcessHTML(result.choices[0]?.message?.content ?? '');
+    return { html, model: `${DEFAULT_KIMI_MODEL}-improve` };
 }
-
-
-

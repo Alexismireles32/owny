@@ -15,11 +15,11 @@
     "test:visual": "playwright test --config=playwright.visual.config.ts",
     "test:visual:update": "playwright test --config=playwright.visual.config.ts --update-snapshots",
     "test:lighthouse": "lhci autorun --config=./lighthouserc.json",
+    "test:kimi-smoke": "node scripts/kimi-smoke-test.mjs",
     "quality:gates": "npm run tokens:build && npm run lint && npm run test && npm run test-storybook && npm run build && npm run test:visual && npm run test:lighthouse",
     "chromatic": "npx chromatic --project-token=chpt_24fdb5e9ca436ff"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "@react-email/components": "^1.0.8",
     "@sentry/nextjs": "^10.40.0",
     "@supabase/ssr": "^0.8.0",

@@ -4,7 +4,8 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { KimiBuilder, ClaudeBuilder, type ProductContext } from '@/lib/ai/router';
+import { DEFAULT_KIMI_MODEL } from '@/lib/ai/kimi';
+import { KimiBuilder, type ProductContext } from '@/lib/ai/router';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import type { DSLBlock } from '@/types/product-dsl';
@@ -58,17 +59,9 @@ export async function POST(request: Request) {
     };
 
     try {
-        // Try Kimi first
         const kimi = new KimiBuilder();
-        try {
-            const improved = await kimi.improveBlock(block, instruction, ctx);
-            return NextResponse.json({ block: improved, model: 'kimi-k2.5' });
-        } catch {
-            // Fallback to Claude
-            const claude = new ClaudeBuilder();
-            const improved = await claude.improveBlock(block, instruction, ctx);
-            return NextResponse.json({ block: improved, model: 'claude-sonnet-4.5-fallback' });
-        }
+        const improved = await kimi.improveBlock(block, instruction, ctx);
+        return NextResponse.json({ block: improved, model: DEFAULT_KIMI_MODEL });
     } catch (err) {
         log.error('Improve block error', { error: err instanceof Error ? err.message : 'Unknown' });
         return NextResponse.json(

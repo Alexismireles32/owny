@@ -157,7 +157,7 @@ async function processIndexingJob(
                 },
             });
 
-            // Throttle to avoid rate limits (Claude + OpenAI)
+            // Throttle to avoid AI provider rate limits
             await new Promise((r) => setTimeout(r, 500));
         }
 

@@ -1,11 +1,10 @@
 // src/lib/indexing/clip-card-generator.ts
-// PRD §5.2 — Clip card generation using Claude (Haiku 4.5 for cost)
+// PRD §5.2 — Clip card generation using Kimi K2.5
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ClipCard } from '@/types/clip-card';
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
+import { requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 
 const SYSTEM_PROMPT = `You are a Content Indexer. Given a video transcript and metadata, produce a structured
 Clip Card as JSON. This card will be used for search and retrieval — make it precise.
@@ -38,14 +37,8 @@ const ClipCardSchema = z.object({
     estimatedDuration: z.string().default(''),
 });
 
-function getAnthropicClient(): Anthropic {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-    return new Anthropic({ apiKey });
-}
-
 /**
- * Generate a clip card from a transcript + metadata using Claude
+ * Generate a clip card from a transcript + metadata using Kimi
  */
 export async function generateClipCard(
     transcript: string,
@@ -57,8 +50,6 @@ export async function generateClipCard(
         createdAt?: string | null;
     }
 ): Promise<ClipCard> {
-    const client = getAnthropicClient();
-
     const userMessage = JSON.stringify({
         transcript: transcript.slice(0, 8000), // Cap transcript to avoid token limits
         metadata: {
@@ -70,20 +61,12 @@ export async function generateClipCard(
         },
     });
 
-    const response = await client.messages.parse({
-        model: 'claude-haiku-4-5-20241022',
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
-        output_config: {
-            format: zodOutputFormat(ClipCardSchema),
-        },
+    const parsed = await requestKimiStructuredObject({
+        systemPrompt: SYSTEM_PROMPT,
+        userPrompt: userMessage,
+        schema: ClipCardSchema,
+        maxTokens: 2048,
     });
-
-    const parsed = response.parsed_output;
-    if (!parsed) {
-        throw new Error('Clip card generation returned empty structured output');
-    }
 
     // Validate required fields
     if (!parsed.topicTags || !parsed.title || !parsed.contentType) {

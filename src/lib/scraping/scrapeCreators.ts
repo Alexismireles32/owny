@@ -152,6 +152,12 @@ function toNumber(val: unknown): number {
     return 0;
 }
 
+function toNonEmptyStringOrNull(val: unknown): string | null {
+    if (typeof val !== 'string') return null;
+    const trimmed = val.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 function resolveUrl(val: unknown): string | null {
     if (typeof val === 'string' && val.length > 0) return val;
     // ScrapeCreators nests cover images as { url_list: string[] }
@@ -225,7 +231,7 @@ export async function fetchTikTokProfile(handle: string): Promise<NormalizedProf
         handle: String(user.unique_id || user.uniqueId || user.handle || handle),
         nickname: String(user.nickname || user.display_name || handle),
         bio: typeof user.signature === 'string' ? user.signature : (typeof user.bio === 'string' ? user.bio : null),
-        avatarUrl: String(user.avatar_url || user.avatar_larger || user.avatarLarger || ''),
+        avatarUrl: toNonEmptyStringOrNull(user.avatar_url || user.avatar_larger || user.avatarLarger),
         followerCount: toNumber(stats.follower_count || stats.followerCount || user.follower_count),
         followingCount: toNumber(stats.following_count || stats.followingCount || user.following_count),
         videoCount: toNumber(stats.video_count || stats.videoCount || user.video_count),

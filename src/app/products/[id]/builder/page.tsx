@@ -53,8 +53,12 @@ export default async function BuilderPage({ params }: Props) {
             .eq('id', product.active_version_id)
             .single();
         dslJson = version?.dsl_json || null;
-        buildPacket = version?.build_packet || null;
+        buildPacket = version?.build_packet
+            ? { ...(version.build_packet as Record<string, unknown>), productStatus: product.status }
+            : { productStatus: product.status };
         generatedHtml = (version as unknown as { generated_html: string | null })?.generated_html || null;
+    } else {
+        buildPacket = { productStatus: product.status };
     }
 
     return (

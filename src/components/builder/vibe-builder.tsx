@@ -46,6 +46,15 @@ interface QualityInsights {
     gateScores: QualityGateSnapshot[];
 }
 
+interface BuildRuntimeInsights {
+    htmlBuildMode: string | null;
+    stageTimingsMs: Record<string, number>;
+    improvedSectionIds: string[];
+    rejectionReason: string | null;
+    saveRejected: boolean;
+    failingGates: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -118,6 +127,68 @@ function toQualityInsightsFromBuildPacket(buildPacket: Record<string, unknown> |
     };
 }
 
+function toBuildRuntimeInsightsFromBuildPacket(buildPacket: Record<string, unknown> | null): BuildRuntimeInsights | null {
+    if (!isRecord(buildPacket)) return null;
+
+    const htmlBuildMode = typeof buildPacket.htmlBuildMode === 'string'
+        ? buildPacket.htmlBuildMode
+        : null;
+    const improvedSectionIds = Array.isArray(buildPacket.improvedSectionIds)
+        ? buildPacket.improvedSectionIds
+            .map((item) => (typeof item === 'string' ? item : null))
+            .filter((item): item is string => Boolean(item))
+        : [];
+    const rejectionReason = typeof buildPacket.rejectionReason === 'string'
+        ? buildPacket.rejectionReason
+        : null;
+    const saveRejected = buildPacket.saveRejected === true;
+    const failingGates = Array.isArray(buildPacket.qualityFailingGates)
+        ? buildPacket.qualityFailingGates
+            .map((item) => (typeof item === 'string' ? item : null))
+            .filter((item): item is string => Boolean(item))
+        : [];
+    const stageTimingsMs: Record<string, number> = {};
+    if (isRecord(buildPacket.stageTimingsMs)) {
+        for (const [key, value] of Object.entries(buildPacket.stageTimingsMs)) {
+            if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+                stageTimingsMs[key] = Math.round(value);
+            }
+        }
+    }
+
+    if (!htmlBuildMode && improvedSectionIds.length === 0 && !rejectionReason && Object.keys(stageTimingsMs).length === 0) {
+        return null;
+    }
+
+    return { htmlBuildMode, stageTimingsMs, improvedSectionIds, rejectionReason, saveRejected, failingGates };
+}
+
+function formatBuildMode(mode: string | null): string | null {
+    if (!mode) return null;
+    const labels: Record<string, string> = {
+        'kimi-sectioned': 'Kimi staged',
+        'kimi-improve-sectioned': 'Kimi refine',
+        'kimi-improve-monolith': 'Kimi rewrite',
+    };
+    return labels[mode] || mode.replace(/[-_]/g, ' ');
+}
+
+function formatDuration(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    const seconds = Math.round(ms / 100) / 10;
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.round((seconds % 60) * 10) / 10;
+    return `${minutes}m ${remainder}s`;
+}
+
+function summarizeStageTimings(stageTimingsMs: Record<string, number>): string | null {
+    if (typeof stageTimingsMs.total === 'number') return formatDuration(stageTimingsMs.total);
+    const values = Object.values(stageTimingsMs);
+    if (values.length === 0) return null;
+    return formatDuration(values.reduce((sum, value) => sum + value, 0));
+}
+
 function mergeBuildPacketWithMetadata(
     packet: Record<string, unknown>,
     metadata: Record<string, unknown> | null
@@ -132,6 +203,11 @@ function mergeBuildPacketWithMetadata(
     if (typeof metadata.creativeDirectionId === 'string') merged.creativeDirectionId = metadata.creativeDirectionId;
     if (typeof metadata.criticIterations === 'number') merged.criticIterations = metadata.criticIterations;
     if (Array.isArray(metadata.criticModels)) merged.criticModels = metadata.criticModels;
+    if (typeof metadata.htmlBuildMode === 'string') merged.htmlBuildMode = metadata.htmlBuildMode;
+    if (isRecord(metadata.stageTimingsMs)) merged.stageTimingsMs = metadata.stageTimingsMs;
+    if (Array.isArray(metadata.touchedSectionIds)) merged.improvedSectionIds = metadata.touchedSectionIds;
+    if (typeof metadata.rejectionReason === 'string') merged.rejectionReason = metadata.rejectionReason;
+    if (typeof metadata.saveRejected === 'boolean') merged.saveRejected = metadata.saveRejected;
 
     return merged;
 }
@@ -195,7 +271,6 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
     const [saving, setSaving] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [aiLoading, setAiLoading] = useState(false);
-    const [aiProgress, setAiProgress] = useState('');
     const [actionError, setActionError] = useState<string | null>(null);
     const [improveInput, setImproveInput] = useState('');
     const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([]);
@@ -207,6 +282,9 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
     });
     const [qualityInsights, setQualityInsights] = useState<QualityInsights | null>(() => (
         toQualityInsightsFromBuildPacket(isRecord(initialBuildPacket) ? initialBuildPacket : null)
+    ));
+    const [buildRuntimeInsights, setBuildRuntimeInsights] = useState<BuildRuntimeInsights | null>(() => (
+        toBuildRuntimeInsightsFromBuildPacket(isRecord(initialBuildPacket) ? initialBuildPacket : null)
     ));
     const chatEndRef = useRef<HTMLDivElement>(null);
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -232,77 +310,9 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         };
     }, [generatedHtml, dsl, lastSavedHtml, onSave, workingBuildPacket]);
 
-    // --- Full AI Generation (HTML+Tailwind) with SSE Streaming ---
-    const handleAiGenerate = useCallback(async () => {
-        setAiLoading(true);
-        setAiProgress('Connecting to AI...');
-
-        try {
-            // Use the latest working build packet when available; otherwise build a minimal packet.
-            const buildPacket = Object.keys(workingBuildPacket).length > 0
-                ? {
-                    ...workingBuildPacket,
-                    productType: workingBuildPacket.productType || dsl.product.type,
-                    title: dsl.product.title,
-                    tone: dsl.themeTokens?.mood || (typeof workingBuildPacket.tone === 'string' ? workingBuildPacket.tone : 'professional'),
-                    brandTokens: dsl.themeTokens,
-                }
-                : {
-                    productType: dsl.product.type,
-                    title: dsl.product.title,
-                    audience: 'general',
-                    tone: dsl.themeTokens?.mood || 'professional',
-                    brandTokens: dsl.themeTokens,
-                    clips: [],
-                };
-
-            const res = await fetch('/api/ai/build-product', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ buildPacket }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                setAiProgress(`Error: ${data.error || 'Failed to generate product'}`);
-                setAiLoading(false);
-                return;
-            }
-
-            if (data.html) {
-                setGeneratedHtml(data.html);
-                if (data.dsl) setDsl(data.dsl);
-                setAiProgress('');
-                const metadata = isRecord(data.metadata) ? data.metadata : null;
-                const updatedPacket = mergeBuildPacketWithMetadata(buildPacket, metadata);
-                setWorkingBuildPacket(updatedPacket);
-                setQualityInsights((prev) => (
-                    mergeQualityInsightsWithMetadata(
-                        prev || toQualityInsightsFromBuildPacket(updatedPacket),
-                        metadata
-                    )
-                ));
-
-                const qualityScore = metadata && typeof metadata.qualityScore === 'number'
-                    ? metadata.qualityScore
-                    : null;
-                setChatHistory([{
-                    role: 'ai',
-                    message: `✨ Your product page is ready!${qualityScore !== null ? ` Quality score: ${qualityScore}/100.` : ''} Use the chat below to refine the design.`,
-                }]);
-            } else if (data.dsl) {
-                // Fallback: legacy DSL response
-                setDsl(data.dsl);
-                setAiProgress('Generated DSL (no HTML). Try again or use legacy mode.');
-            } else {
-                setAiProgress('No content returned — try again.');
-            }
-        } catch (err) {
-            setAiProgress(`Error: ${err instanceof Error ? err.message : 'Network error'}`);
-        }
-        setAiLoading(false);
-    }, [dsl, workingBuildPacket]);
+    const handleOpenStudio = useCallback(() => {
+        window.location.href = '/dashboard';
+    }, []);
 
     // --- AI Improve (send current HTML + instruction) ---
     const handleAiImprove = useCallback(async (directPrompt?: string) => {
@@ -316,15 +326,41 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
             const res = await fetch('/api/ai/improve-html', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ html: generatedHtml, instruction }),
+                body: JSON.stringify({
+                    productId,
+                    html: generatedHtml,
+                    instruction,
+                    buildPacket: workingBuildPacket,
+                }),
             });
 
             const data = await res.json();
+            const metadata = isRecord(data.metadata) ? data.metadata : null;
 
             if (data.html) {
                 setGeneratedHtml(data.html);
+                const updatedPacket = mergeBuildPacketWithMetadata(workingBuildPacket, metadata);
+                setWorkingBuildPacket(updatedPacket);
+                setQualityInsights((prev) => (
+                    mergeQualityInsightsWithMetadata(
+                        prev || toQualityInsightsFromBuildPacket(updatedPacket),
+                        metadata
+                    )
+                ));
+                setBuildRuntimeInsights(toBuildRuntimeInsightsFromBuildPacket(updatedPacket));
                 setChatHistory((prev) => [...prev, { role: 'ai', message: '✅ Applied your changes! Take a look at the preview.' }]);
             } else {
+                if (metadata) {
+                    const updatedPacket = mergeBuildPacketWithMetadata(workingBuildPacket, metadata);
+                    setWorkingBuildPacket(updatedPacket);
+                    setQualityInsights((prev) => (
+                        mergeQualityInsightsWithMetadata(
+                            prev || toQualityInsightsFromBuildPacket(updatedPacket),
+                            metadata
+                        )
+                    ));
+                    setBuildRuntimeInsights(toBuildRuntimeInsightsFromBuildPacket(updatedPacket));
+                }
                 setChatHistory((prev) => [...prev, { role: 'ai', message: `❌ ${data.error || 'Failed to improve. Try a different instruction.'}` }]);
             }
         } catch {
@@ -334,7 +370,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
 
         // Scroll chat to bottom
         setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, [improveInput, generatedHtml]);
+    }, [improveInput, generatedHtml, productId, workingBuildPacket]);
 
     // --- Theme update (for metadata) ---
     const updateTheme = useCallback((key: string, value: string) => {
@@ -507,21 +543,71 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                 )}
                             </div>
                         )}
+
+                        {buildRuntimeInsights && (
+                            <div className="mt-3 rounded-lg border border-white/20 bg-white/5 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold tracking-wide uppercase text-slate-300">Build Runtime</p>
+                                    {buildRuntimeInsights.htmlBuildMode && (
+                                        <span className="rounded-full border border-cyan-300/35 bg-cyan-400/10 px-2 py-0.5 text-xs font-semibold text-cyan-100">
+                                            {formatBuildMode(buildRuntimeInsights.htmlBuildMode)}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="mt-2 space-y-1 text-xs text-slate-300">
+                                    {buildRuntimeInsights.saveRejected && buildRuntimeInsights.rejectionReason && (
+                                        <p className="text-amber-200">
+                                            <span className="text-amber-300">Preview rejected:</span> {buildRuntimeInsights.rejectionReason}
+                                        </p>
+                                    )}
+                                    {summarizeStageTimings(buildRuntimeInsights.stageTimingsMs) && (
+                                        <p>
+                                            <span className="text-slate-400">Total time:</span>{' '}
+                                            {summarizeStageTimings(buildRuntimeInsights.stageTimingsMs)}
+                                        </p>
+                                    )}
+                                    {buildRuntimeInsights.improvedSectionIds.length > 0 && (
+                                        <p>
+                                            <span className="text-slate-400">Touched sections:</span>{' '}
+                                            {buildRuntimeInsights.improvedSectionIds.join(', ')}
+                                        </p>
+                                    )}
+                                    {buildRuntimeInsights.saveRejected && buildRuntimeInsights.failingGates.length > 0 && (
+                                        <p className="text-amber-200">
+                                            <span className="text-slate-400">Failing gates:</span>{' '}
+                                            {buildRuntimeInsights.failingGates.map((gate) => gateLabel(gate)).join(', ')}
+                                        </p>
+                                    )}
+                                </div>
+                                {Object.keys(buildRuntimeInsights.stageTimingsMs).length > 0 && (
+                                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                                        {Object.entries(buildRuntimeInsights.stageTimingsMs)
+                                            .filter(([key]) => key !== 'total')
+                                            .sort((a, b) => a[0].localeCompare(b[0]))
+                                            .map(([key, value]) => (
+                                                <div key={key} className="rounded border border-white/15 bg-black/20 px-2 py-1">
+                                                    <p className="text-[10px] uppercase tracking-wide text-slate-400">{key}</p>
+                                                    <p className="text-xs font-semibold text-cyan-100">{formatDuration(value)}</p>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
-                    {/* Generate Button — shown when no HTML exists */}
+                    {/* Studio CTA — shown when no HTML exists */}
                     {!hasHtml && (
                         <div className="p-4 border-b border-white/15">
                             <Button
                                 className="w-full bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105"
-                                onClick={handleAiGenerate}
-                                disabled={aiLoading}
+                                onClick={handleOpenStudio}
                             >
-                                {aiLoading ? '✨ Generating...' : '✨ Generate with AI'}
+                                Open Product Studio
                             </Button>
-                            {aiProgress && (
-                                <p className="text-xs text-slate-300 mt-2 text-center">{aiProgress}</p>
-                            )}
+                            <p className="mt-2 text-center text-xs text-slate-300">
+                                New products are generated in Studio. This page is for refining and publishing an existing build.
+                            </p>
                         </div>
                     )}
 
@@ -533,15 +619,6 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                     <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
                                         AI Design Chat
                                     </h3>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="text-xs h-6 text-slate-100 hover:bg-white/10"
-                                        onClick={handleAiGenerate}
-                                        disabled={aiLoading}
-                                    >
-                                        🔄 Regenerate
-                                    </Button>
                                 </div>
                             </div>
 
@@ -560,7 +637,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                 ))}
                                 {aiLoading && (
                                     <div className="bg-white/10 text-slate-300 text-sm rounded-lg px-3 py-2 mr-6 animate-pulse border border-white/15">
-                                        {aiProgress || 'Thinking...'}
+                                        Thinking...
                                     </div>
                                 )}
                                 <div ref={chatEndRef} />
@@ -645,26 +722,21 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
                                         <div className="h-4 bg-white/15 rounded w-5/6" />
                                         <div className="h-4 bg-white/15 rounded w-4/6" />
                                     </div>
-                                    <p className="text-sm text-slate-300 mt-4">
-                                        {aiProgress || '✨ AI is building your product page...'}
-                                    </p>
                                 </div>
                             ) : (
                                 <>
                                     <div className="text-6xl mb-4">🎨</div>
                                     <h2 className="text-xl font-bold mb-2">
-                                        Create Your Product Page
+                                        Generate In Studio
                                     </h2>
                                     <p className="text-slate-300 mb-6">
-                                        Set your title and mood in the sidebar, then click &quot;Generate with AI&quot; to create a
-                                        stunning product page with beautiful design, animations, and interactivity.
+                                        The main Studio on your dashboard is the only product generation flow. Return here after generation to refine and publish.
                                     </p>
                                     <Button
                                         className="bg-gradient-to-r from-cyan-400 to-amber-400 text-[#05263a] hover:brightness-105 px-8 py-3"
-                                        onClick={handleAiGenerate}
-                                        disabled={aiLoading}
+                                        onClick={handleOpenStudio}
                                     >
-                                        ✨ Generate with AI
+                                        Open Product Studio
                                     </Button>
                                 </>
                             )}

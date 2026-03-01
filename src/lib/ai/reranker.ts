@@ -1,9 +1,8 @@
 // src/lib/ai/reranker.ts
-// PRD §5.4 — Rerank + Select via Claude Sonnet 4.5
+// PRD §5.4 — Rerank + Select via Kimi K2.5
 
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
+import { requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 
 interface ClipCardInput {
     videoId: string;
@@ -116,12 +115,10 @@ function normalizeResult(
         .filter((gap) => gap.length > 0)
         .slice(0, 10);
 
-    const confidence: 'high' | 'medium' | 'low' = raw.confidence;
-
     return {
         selectedVideos,
         coverageGaps,
-        confidence,
+        confidence: raw.confidence,
     };
 }
 
@@ -143,7 +140,7 @@ function buildDeterministicFallback(
 }
 
 /**
- * Rerank search candidates using Claude Sonnet 4.5.
+ * Rerank search candidates using Kimi K2.5.
  * Takes the top 60 clip cards and selects 15-25 most relevant.
  */
 export async function rerankCandidates(
@@ -159,9 +156,6 @@ export async function rerankCandidates(
         };
     }
 
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-
-    // Compress cards with normalized field aliases for stable reranking quality.
     const compressedCards = candidates.slice(0, 60).map((c) => {
         const card = (c.clipCard || {}) as Record<string, unknown>;
         const topics = readStringArray(card, ['topicTags', 'topics', 'tags']);
@@ -187,30 +181,19 @@ Available Videos (${compressedCards.length} candidates):
 ${JSON.stringify(compressedCards, null, 1)}`;
 
     try {
-        const response = await anthropic.messages.parse({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4096,
-            system: RERANK_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userMessage }],
-            output_config: {
-                format: zodOutputFormat(RerankResultSchema),
-            },
+        const parsed = await requestKimiStructuredObject({
+            systemPrompt: RERANK_SYSTEM_PROMPT,
+            userPrompt: userMessage,
+            schema: RerankResultSchema,
+            maxTokens: 4096,
         });
-
-        const parsed = response.parsed_output;
-        if (!parsed) {
-            return buildDeterministicFallback(
-                candidates,
-                'AI reranker returned empty structured output; used deterministic fallback selection.',
-            );
-        }
 
         return normalizeResult(parsed, candidates);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return buildDeterministicFallback(
             candidates,
-            `AI reranker failed (${message.slice(0, 180)}); used deterministic fallback selection.`,
+            `Kimi reranker failed (${message.slice(0, 180)}); used deterministic fallback selection.`,
         );
     }
 }

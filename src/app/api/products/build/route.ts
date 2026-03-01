@@ -3,7 +3,6 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import Anthropic from '@anthropic-ai/sdk';
 import { hybridSearch } from '@/lib/indexing/search';
 import { rerankCandidates } from '@/lib/ai/reranker';
 import { postProcessHTML } from '@/lib/ai/router';
@@ -15,6 +14,7 @@ import {
 } from '@/lib/ai/design-canon';
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
 import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
+import { runKimiSectionedProductPipeline } from '@/lib/ai/kimi-product-pipeline';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 
@@ -25,210 +25,6 @@ function getServiceDb() {
     );
 }
 
-// ─── Product-type-specific CONTENT system prompts ───
-// These generate the ACTUAL product, NOT a sales/landing page.
-
-const PRODUCT_SYSTEM_PROMPTS: Record<string, string> = {
-    pdf_guide: `You are a Digital Product Writer creating a REAL, COMPREHENSIVE PDF-style guide.
-
-OUTPUT RULES:
-- Output ONLY raw HTML. No markdown fences. Start with <!DOCTYPE html>.
-- Include Tailwind CSS CDN, Inter font, and Alpine.js CDN.
-- Include <meta name="viewport" content="width=device-width, initial-scale=1">.
-
-THIS IS THE ACTUAL PRODUCT — NOT A LANDING PAGE. No hero sections, no CTAs, no pricing, no "Get Access" buttons.
-
-STRUCTURE:
-1. COVER PAGE — Title, subtitle, author name, a tasteful gradient cover design
-2. TABLE OF CONTENTS — Clickable chapter titles with anchor links (href="#chapter-1" etc)
-3. CHAPTERS — Each chapter wrapped in <section id="chapter-N"> with:
-   - Chapter number + title (h2)
-   - Introduction paragraph
-   - Main content body (2-5 paragraphs per section)
-   - Key takeaways / bullet points
-   - Actionable tips or step-by-step instructions
-   - Pro tips in highlighted callout boxes
-   - "Back to Top ↑" link at the bottom of each chapter (href="#toc")
-4. CONCLUSION — Summary of key learnings
-
-NAVIGATION:
-- Table of Contents must have id="toc" and each chapter link must be clickable anchor links
-- Each chapter section must have a unique id (e.g., id="chapter-1", id="chapter-2")
-- Add a sticky or fixed "↑" back-to-top button using Alpine.js
-
-DESIGN:
-- Clean, ebook-like layout. Max-width 720px centered. Generous padding.
-- Chapter headings: text-3xl font-bold with left border accent (border-l-4 border-indigo-500)
-- Body text: text-gray-700 leading-relaxed text-base
-- Callout boxes: bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-r-lg
-- Tip boxes: bg-amber-50 border border-amber-200 p-4 rounded-xl with "💡 Pro Tip" header
-- Step lists: Numbered with bg-indigo-500 text-white w-8 h-8 rounded-full step indicators
-- Page breaks: Use border-t border-gray-200 my-12 between chapters
-- Print-friendly: Avoid dark backgrounds so it prints cleanly
-
-CONTENT RULES:
-- Use the transcript content VERBATIM where possible, then enhance with connecting text.
-- Every piece of advice, tip, and step must come from the creator's actual video content.
-- Write in the creator's voice and tone.
-- Each chapter should have 400-800 words of REAL content.
-- Include specific, actionable information — not filler.`,
-
-    mini_course: `You are a Digital Product Writer creating a REAL, MULTI-LESSON online course.
-
-OUTPUT RULES:
-- Output ONLY raw HTML. No markdown fences. Start with <!DOCTYPE html>.
-- Include Tailwind CSS CDN, Inter font, and Alpine.js CDN.
-
-THIS IS THE ACTUAL COURSE — NOT A LANDING PAGE. No hero sections, no CTAs, no pricing.
-
-STRUCTURE:
-1. COURSE HEADER — Course title, subtitle, module count, creator name
-2. MODULE NAVIGATION — Sidebar or top nav (Alpine.js tabs/accordion) showing all modules:
-   - Use Alpine.js x-data to track activeModule
-   - Each module title clickable to expand/show that module's content
-   - Show progress ("Module 1 of 5")
-3. MODULE CONTENT — Each module wrapped in <section id="module-N"> with:
-   - Module number badge + title (h2)
-   - Module overview (1 paragraph)
-   - LESSONS — Each lesson has:
-     - Lesson title (h3)
-     - Lesson text (2-4 paragraphs drawn from transcripts)
-     - Key Takeaways in highlighted box
-     - 🎯 Action Item (1-2 specific steps)
-4. MODULE NAVIGATION — At the bottom of each module:
-   - "← Previous Module" and "Next Module →" buttons
-   - These navigate between sections using Alpine.js
-
-NAVIGATION:
-- Use Alpine.js x-data="{ activeModule: 1 }" pattern for module switching
-- Only show the active module's content (x-show="activeModule === N")
-- Module tabs/nav always visible so user can jump between modules
-- Previous/Next buttons at the bottom of each module section
-
-DESIGN:
-- Dark sidebar or top tab bar for module navigation
-- Active module indicator with accent color
-- Module cards: bg-white rounded-2xl shadow-sm p-8
-- Lesson headers: text-xl font-semibold with colored left border
-- Takeaway boxes: bg-green-50 border border-green-200 p-4 rounded-xl
-- Action items: bg-blue-50 border-l-4 border-blue-400 p-4
-- Step chips: inline-flex h-6 w-6 rounded-full bg-indigo-500 text-white text-xs
-
-CONTENT RULES:
-- Draw all teaching content from the creator's transcripts
-- Mix verbatim quotes with AI-generated connecting explanations
-- Each lesson should have 300-600 words of real teaching content
-- Include specific steps, not generic advice`,
-
-    challenge_7day: `You are a Digital Product Writer creating a REAL 7-DAY CHALLENGE program.
-
-OUTPUT RULES:
-- Output ONLY raw HTML. No markdown fences. Start with <!DOCTYPE html>.
-- Include Tailwind CSS CDN, Inter font, and Alpine.js CDN.
-
-THIS IS THE ACTUAL CHALLENGE — NOT A LANDING PAGE. No hero sections, no CTAs, no pricing.
-
-STRUCTURE:
-1. CHALLENGE HEADER — Title, "7-Day Challenge by [Creator]", challenge goal
-2. DAY NAVIGATOR — A horizontal day selector bar (Alpine.js tabs):
-   - Use Alpine.js x-data="{ activeDay: 1 }" pattern
-   - 7 clickable day badges/tabs showing Day 1-7
-   - Active day highlighted with accent color
-   - Each day's content shown/hidden via x-show
-3. OVERVIEW — What participants will achieve, how it works (always visible)
-4. DAY SECTIONS — Each day wrapped in <section id="day-N" x-show="activeDay === N"> with:
-   - Day number + title (e.g., "Day 1: Foundation")
-   - Daily objective (1 sentence)
-   - TODAY'S LESSON (2-3 paragraphs of teaching content from transcripts)
-   - TODAY'S TASKS (3-5 specific action items with descriptions)
-   - Expected duration per task
-   - 📝 Daily Reflection prompt (1-2 questions to journal/think about)
-   - ✅ Daily Checklist (Alpine.js powered checkboxes)
-   - "← Previous Day" and "Next Day →" navigation buttons
-5. COMPLETION — Congratulations + next steps (shown when activeDay === 8 or always at bottom)
-
-NAVIGATION:
-- Day tabs always visible at top for jumping between days
-- Previous/Next buttons at bottom of each day section
-- Progress dots: filled for completed days (Alpine.js state)
-
-DESIGN:
-- Day cards: Each day is a distinct section with consistent layout
-- Day badges: w-14 h-14 rounded-2xl bg-gradient-flex items-center justify-center text-2xl font-bold text-white
-- Task items: flex gap-3 with numbered circles and descriptions
-- Reflection boxes: bg-purple-50 border border-purple-200 p-5 rounded-xl
-- Checklist: Alpine.js powered checkboxes that toggle
-- Progress: Visual day tracker at the top (7 dots, filled for completed)
-
-CONTENT RULES:
-- Tasks must be SPECIFIC and ACTIONABLE (from the creator's actual advice)
-- Each day's lesson draws from the creator's transcript content
-- Reflections should be thought-provoking and related to the day's topic
-- Tasks should build progressively across the 7 days`,
-
-    checklist_toolkit: `You are a Digital Product Writer creating a REAL, INTERACTIVE CHECKLIST TOOLKIT.
-
-OUTPUT RULES:
-- Output ONLY raw HTML. No markdown fences. Start with <!DOCTYPE html>.
-- Include Tailwind CSS CDN, Inter font, and Alpine.js CDN.
-
-THIS IS THE ACTUAL TOOLKIT — NOT A LANDING PAGE. No hero sections, no CTAs, no pricing.
-
-STRUCTURE:
-1. TOOLKIT HEADER — Title, description, total items count
-2. CATEGORY NAVIGATION — A sticky sidebar or top bar (Alpine.js):
-   - List all categories with item counts
-   - Clickable links that scroll to each category (anchor links)
-   - Show overall progress ("X of Y complete")
-3. CATEGORIES — Each wrapped in <section id="category-N"> with:
-   - Category title + description
-   - Items count ("8 items")
-   - CHECKLIST ITEMS — Each has:
-     - Interactive checkbox (Alpine.js)
-     - Item label (the action)
-     - Description/explanation (why this matters, from transcripts)
-     - Optional: "Required" vs "Optional" badge
-     - Optional: Tip or note from creator
-4. PROGRESS SUMMARY — Shows X of Y complete (Alpine.js powered)
-
-NAVIGATION:
-- Sticky category nav that highlights the current section on scroll
-- Each category header is an anchor target
-- "Back to Categories" link within each section
-- Overall progress bar at the top
-
-DESIGN:
-- Clean, Notion-like aesthetic
-- Categories: border rounded-2xl p-6 mb-6
-- Category headers: text-xl font-bold flex justify-between items-center
-- Checklist items: p-4 border-b hover:bg-gray-50 transition flex items-start gap-3
-- Checkboxes: w-5 h-5 rounded border-2 cursor-pointer (Alpine.js toggles)
-- Checked items: line-through text-gray-400 transition
-- Required badge: text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full
-- Progress bar: h-2 bg-gray-200 rounded-full with colored fill
-
-INTERACTIVE ELEMENTS:
-- Use Alpine.js x-data for checkbox state tracking
-- Progress counter updates automatically as items are checked
-- Category collapse/expand with Alpine.js
-
-CONTENT RULES:
-- Every checklist item must come from the creator's actual content/advice
-- Descriptions explain WHY each item matters (from transcripts)
-- Group logically by category/theme
-- Mark truly essential items as "Required"`,
-};
-
-// Tailwind config snippet for all product types
-const TAILWIND_CONFIG = `<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-    }
-  }
-}
-</script>`;
 
 interface TranscriptSelectionRow {
     video_id: string;
@@ -594,94 +390,75 @@ function countHtmlWords(html: string): number {
     return text.split(' ').filter(Boolean).length;
 }
 
-function minimumWordTarget(productType: ProductType): number {
-    switch (productType) {
-        case 'pdf_guide':
-            return 1400;
-        case 'mini_course':
-            return 1200;
-        case 'challenge_7day':
-            return 1000;
-        case 'checklist_toolkit':
-            return 900;
-        default:
-            return 1000;
+const MAX_GROUNDED_VIDEOS = 8;
+const MAX_TRANSCRIPT_CONTEXT_CHARS = 2200;
+const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 1800;
+const KIMI_PIPELINE_TIMEOUT_MS = 240_000;
+const CRITIC_LOOP_TIMEOUT_MS = 70_000;
+
+function buildContentContext(
+    contexts: Array<{
+        videoId: string;
+        title: string;
+        views: number;
+        topicTags: string[];
+        keySteps: string[];
+        transcriptContext: string;
+    }>,
+    maxVideos = MAX_GROUNDED_VIDEOS,
+    maxCharsPerVideo = MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO
+): string {
+    return contexts
+        .slice(0, maxVideos)
+        .map((row, i) => `--- VIDEO ${i + 1} [ID: ${row.videoId}] ---
+TITLE: "${row.title}" (${row.views} views)
+${row.topicTags.length > 0 ? `KEY TOPICS: ${row.topicTags.join(', ')}` : 'KEY TOPICS: N/A'}
+${row.keySteps.length > 0 ? `KEY STEPS: ${JSON.stringify(row.keySteps)}` : 'KEY STEPS: []'}
+TRANSCRIPT EVIDENCE:
+${row.transcriptContext.slice(0, maxCharsPerVideo)}
+---`)
+        .join('\n\n');
+}
+
+async function withTimeout<T>(
+    work: Promise<T>,
+    timeoutMs: number,
+    label: string
+): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    try {
+        return await Promise.race([
+            work,
+            new Promise<T>((_, reject) => {
+                timeoutHandle = setTimeout(() => {
+                    reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
     }
-}
-
-function containsPlaceholderCopy(html: string): boolean {
-    const lower = html.toLowerCase();
-    return (
-        lower.includes('lorem ipsum')
-        || lower.includes('coming soon')
-        || lower.includes('placeholder')
-        || lower.includes('[insert')
-    );
-}
-
-function needsContentStrengthening(html: string, productType: ProductType): boolean {
-    if (!html.toLowerCase().includes('<!doctype html>')) return true;
-    if (containsPlaceholderCopy(html)) return true;
-    return countHtmlWords(html) < minimumWordTarget(productType);
-}
-
-function extractAnthropicText(response: Anthropic.Messages.Message): string {
-    return response.content
-        .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('');
-}
-
-async function strengthenHtmlDraft(input: {
-    anthropic: Anthropic;
-    systemPrompt: string;
-    productType: ProductType;
-    draftHtml: string;
-    topicQuery: string;
-    voiceContext: string;
-    contentContext: string;
-}): Promise<string> {
-    const response = await input.anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8192,
-        system: input.systemPrompt,
-        messages: [{
-            role: 'user',
-            content: `The draft ${input.productType} below is too shallow for a paid product.
-Expand it with substantial, specific teaching content grounded in the provided transcript context.
-Keep the existing structure and design style, but deepen lessons/chapters/actions.
-Output ONLY full HTML.
-
-TOPIC:
-${input.topicQuery}
-
-VOICE PROFILE:
-${input.voiceContext || '(none)'}
-
-TRANSCRIPT CONTEXT:
-${input.contentContext}
-
-CURRENT DRAFT HTML:
-${input.draftHtml}`,
-        }],
-    });
-
-    return extractAnthropicText(response);
 }
 
 async function loadCreatorCatalogHtml(
     db: ReturnType<typeof getServiceDb>,
     creatorId: string,
-    excludeProductId: string
+    excludeProductId?: string
 ): Promise<string[]> {
     try {
-        const { data: products, error: productsError } = await db
+        let productsQuery = db
             .from('products')
             .select('active_version_id')
             .eq('creator_id', creatorId)
-            .neq('id', excludeProductId)
             .not('active_version_id', 'is', null)
             .limit(40);
+
+        if (excludeProductId) {
+            productsQuery = productsQuery.neq('id', excludeProductId);
+        }
+
+        const { data: products, error: productsError } = await productsQuery;
 
         if (productsError || !products || products.length === 0) {
             return [];
@@ -778,9 +555,40 @@ export async function POST(request: Request) {
 
     const stream = new ReadableStream({
         async start(controller) {
-            const send = (event: Record<string, unknown>) => {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+            let streamClosed = false;
+            let requestAborted = false;
+
+            const closeStream = () => {
+                if (streamClosed) return;
+                streamClosed = true;
+                try {
+                    controller.close();
+                } catch {
+                    // The stream controller may already be closed if the client disconnects.
+                }
             };
+
+            const send = (event: Record<string, unknown>) => {
+                if (streamClosed || requestAborted) return;
+                try {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+                } catch {
+                    streamClosed = true;
+                }
+            };
+
+            const ensureActiveRequest = () => {
+                if (request.signal.aborted || requestAborted) {
+                    requestAborted = true;
+                    closeStream();
+                    throw new Error('Build request was aborted by the client.');
+                }
+            };
+
+            request.signal.addEventListener('abort', () => {
+                requestAborted = true;
+                closeStream();
+            });
 
             try {
                 // ── Phase 1: Topic Discovery ──
@@ -798,7 +606,7 @@ export async function POST(request: Request) {
                         type: 'error',
                         message: '📭 No content found. Please import your TikTok videos first so the AI can build products from your real content.',
                     });
-                    controller.close();
+                    closeStream();
                     return;
                 }
 
@@ -827,7 +635,7 @@ export async function POST(request: Request) {
                             topics: topTopics,
                             productType,
                         });
-                        controller.close();
+                        closeStream();
                         return;
                     }
                 }
@@ -862,7 +670,7 @@ export async function POST(request: Request) {
                         type: 'error',
                         message: '📭 Not enough relevant content found for this topic. Try a different topic or import more videos.',
                     });
-                    controller.close();
+                    closeStream();
                     return;
                 }
 
@@ -931,7 +739,7 @@ export async function POST(request: Request) {
                             transcript?.transcript_text,
                             chunksByVideo.get(videoId) || [],
                             queryTokens,
-                            6000
+                            MAX_TRANSCRIPT_CONTEXT_CHARS
                         );
 
                         if (!transcriptContext) return null;
@@ -952,14 +760,15 @@ export async function POST(request: Request) {
                         topicTags: string[];
                         keySteps: string[];
                         transcriptContext: string;
-                    } => Boolean(row));
+                    } => Boolean(row))
+                    .slice(0, MAX_GROUNDED_VIDEOS);
 
                 if (selectedContexts.length === 0) {
                     send({
                         type: 'error',
                         message: '📭 We found videos but could not retrieve enough transcript content. Please retry import to refresh transcripts.',
                     });
-                    controller.close();
+                    closeStream();
                     return;
                 }
 
@@ -969,13 +778,7 @@ export async function POST(request: Request) {
                 }, 0);
                 const groundedVideoIds = selectedContexts.map((row) => row.videoId);
 
-                const contentContext = selectedContexts.map((row, i) => `--- VIDEO ${i + 1} [ID: ${row.videoId}] ---
-TITLE: "${row.title}" (${row.views} views)
-${row.topicTags.length > 0 ? `KEY TOPICS: ${row.topicTags.join(', ')}` : 'KEY TOPICS: N/A'}
-${row.keySteps.length > 0 ? `KEY STEPS: ${JSON.stringify(row.keySteps)}` : 'KEY STEPS: []'}
-TRANSCRIPT EVIDENCE:
-${row.transcriptContext}
----`).join('\n\n');
+                const contentContext = buildContentContext(selectedContexts);
 
                 send({
                     type: 'source_videos',
@@ -999,33 +802,11 @@ ${row.transcriptContext}
                 const slug = productTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
                     + '-' + Date.now().toString(36);
 
-                // ── Phase 4: Create product + Stream HTML ──
+                // ── Phase 4: Stream product build ──
                 send({ type: 'status', message: '🏗️ Building your product live...', phase: 'building' });
+                ensureActiveRequest();
 
-                // Create product in DB first
-                const { data: product, error: productError } = await db
-                    .from('products')
-                    .insert({
-                        creator_id: creator.id,
-                        slug,
-                        type: productType,
-                        title: productTitle,
-                        description: `Created from: "${message}"`,
-                        status: 'draft',
-                        access_type: 'paid',
-                        price_cents: 999,
-                        currency: 'usd',
-                    })
-                    .select('id')
-                    .single();
-
-                if (productError || !product) {
-                    send({ type: 'error', message: `Failed to create product: ${productError?.message || 'Unknown'}` });
-                    controller.close();
-                    return;
-                }
-
-                const catalogHtml = await loadCreatorCatalogHtml(db, creator.id, product.id);
+                const catalogHtml = await loadCreatorCatalogHtml(db, creator.id);
 
                 send({
                     type: 'status',
@@ -1053,128 +834,49 @@ ${row.transcriptContext}
                     priorProductCount: catalogHtml.length,
                 });
                 const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
-                const voiceContext = creatorDnaContext;
 
-                const systemPrompt = PRODUCT_SYSTEM_PROMPTS[productType] || PRODUCT_SYSTEM_PROMPTS.pdf_guide;
+                send({
+                    type: 'status',
+                    message: '📚 Kimi is curating source evidence and planning the product architecture...',
+                    phase: 'building',
+                });
+                ensureActiveRequest();
 
-                const userContent = `Create the ACTUAL digital product content.
+                const pipelineResult = await withTimeout(
+                    runKimiSectionedProductPipeline({
+                        productType,
+                        productTitle,
+                        topicQuery,
+                        creatorDisplayName: creator.display_name || creator.handle,
+                        creatorHandle: creator.handle,
+                        creatorDna,
+                        creatorDnaContext,
+                        designCanonContext,
+                        creativeDirection,
+                        selectedContexts,
+                    }),
+                    KIMI_PIPELINE_TIMEOUT_MS,
+                    'Kimi sectioned product pipeline'
+                );
 
-PRODUCT TYPE: ${productType}
-PRODUCT TITLE: ${productTitle}
-CREATOR: ${creator.display_name} (@${creator.handle})
-USER REQUEST: ${message}
-TOPIC FOCUS: ${topicQuery}
-DESIGN CANON VERSION: ${designCanon.version}
-CREATIVE DIRECTION: ${creativeDirection.name} (${creativeDirection.id})
+                const sourceVideoIdsForBuild = pipelineResult.librarianPack.selectedVideoIds.length > 0
+                    ? pipelineResult.librarianPack.selectedVideoIds
+                    : groundedVideoIds;
+                let fullHtml = postProcessHTML(pipelineResult.html);
+                const htmlBuildMode = 'kimi-sectioned';
 
-${creatorDnaContext}
+                send({
+                    type: 'status',
+                    message: `🧠 Kimi built ${pipelineResult.sectionBlocks.length} section block(s) and composed the final product.`,
+                    phase: 'building',
+                });
 
-${designCanonContext}
-
-VIDEOS USED (${selectedContexts.length} videos with transcript evidence):
-${contentContext}
-
-IMPORTANT:
-- This is an evergreen premium product. Do not chase short-term trends or date-specific aesthetics.
-- This is the REAL product that buyers receive. Fill it with REAL, SUBSTANTIVE content from the transcripts above.
-- Mix the creator's own words and advice (from transcripts) with smooth connecting text.
-- Every chapter/lesson/day/category must contain real, actionable content — not placeholder text.
-- Add source attribution comments in HTML for major sections (example: <!-- sources: video-id-1,video-id-2 -->).
-- Write in the creator's voice and style exactly as described in the CREATOR DNA PROFILE.
-- Apply creator visual tokens and the selected creative direction. Avoid generic template patterns.
-- The product should be worth paying for — thorough, specific, and valuable.
-- Include the Tailwind config script right after the Tailwind CDN:
-${TAILWIND_CONFIG}
-
-Generate the complete HTML document now.`;
-
-                // Stream HTML from Claude
-                const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-                let fullHtml = '';
-
-                try {
-                    const aiStream = anthropic.messages.stream({
-                        model: 'claude-sonnet-4-6',
-                        max_tokens: 16384,
-                        system: systemPrompt,
-                        messages: [{ role: 'user', content: userContent }],
-                    });
-
-                    let chunkCount = 0;
-
-                    for await (const event of aiStream) {
-                        if (event.type === 'content_block_delta' && 'delta' in event && event.delta.type === 'text_delta') {
-                            fullHtml += event.delta.text;
-                            chunkCount++;
-
-                            if (chunkCount % 3 === 0) {
-                                send({ type: 'html_chunk', html: fullHtml });
-                            }
-                        }
-                    }
-
-                    // Send final chunk
-                    send({ type: 'html_chunk', html: fullHtml });
-                } catch (claudeErr) {
-                    log.error('Claude streaming failed, trying Kimi', {
-                        error: claudeErr instanceof Error ? claudeErr.message : 'Unknown',
-                    });
-
-                    send({ type: 'status', message: '🔄 Switching to backup AI...', phase: 'fallback' });
-
-                    const OpenAI = (await import('openai')).default;
-                    const kimi = new OpenAI({
-                        apiKey: process.env.KIMI_API_KEY || '',
-                        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-                    });
-
-                    const result = await kimi.chat.completions.create({
-                        model: 'kimi-k2.5',
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: userContent },
-                        ],
-                        temperature: 0.7,
-                        max_tokens: 16000,
-                    });
-
-                    fullHtml = result.choices[0]?.message?.content ?? '';
-                    send({ type: 'html_chunk', html: fullHtml });
-                }
-
-                if (needsContentStrengthening(fullHtml, productType) && process.env.ANTHROPIC_API_KEY) {
-                    send({
-                        type: 'status',
-                        message: '🧠 Strengthening depth and source grounding...',
-                        phase: 'building',
-                    });
-                    try {
-                        const strengthened = await strengthenHtmlDraft({
-                            anthropic,
-                            systemPrompt,
-                            productType,
-                            draftHtml: fullHtml,
-                            topicQuery,
-                            voiceContext,
-                            contentContext,
-                        });
-                        if (strengthened.trim()) {
-                            fullHtml = strengthened;
-                            send({ type: 'html_chunk', html: fullHtml });
-                        }
-                    } catch (strengthenError) {
-                        log.warn('HTML strengthening pass failed', {
-                            error: strengthenError instanceof Error ? strengthenError.message : 'Unknown strengthen error',
-                        });
-                    }
-                }
-
-                fullHtml = postProcessHTML(fullHtml);
+                send({ type: 'html_chunk', html: fullHtml });
 
                 let qualityEvaluation = evaluateProductQuality({
                     html: fullHtml,
                     productType,
-                    sourceVideoIds: groundedVideoIds,
+                    sourceVideoIds: sourceVideoIdsForBuild,
                     catalogHtml,
                     brandTokens,
                     creatorHandle: creator.handle,
@@ -1182,6 +884,9 @@ Generate the complete HTML document now.`;
                 });
                 let criticIterations = 0;
                 let criticModels: string[] = [];
+                const stageTimingsMs = {
+                    ...pipelineResult.stageTimingsMs,
+                } as Record<string, number>;
 
                 if (!qualityEvaluation.overallPassed) {
                     send({
@@ -1189,25 +894,33 @@ Generate the complete HTML document now.`;
                         message: '🧪 Running evergreen quality critic and revision loop...',
                         phase: 'building',
                     });
+                    ensureActiveRequest();
 
                     try {
-                        const criticResult = await runEvergreenCriticLoop({
-                            html: fullHtml,
-                            productType,
-                            sourceVideoIds: groundedVideoIds,
-                            catalogHtml,
-                            brandTokens,
-                            creatorHandle: creator.handle,
-                            creatorDisplayName: creator.display_name || creator.handle,
-                            topicQuery,
-                            originalRequest: message,
-                            creatorDnaContext,
-                            designCanonContext,
-                            directionId: creativeDirection.id,
-                            contentContext,
-                            maxIterations: 2,
-                            qualityWeights: designCanon.qualityWeights,
-                        });
+                        const criticStart = Date.now();
+                        const criticResult = await withTimeout(
+                            runEvergreenCriticLoop({
+                                html: fullHtml,
+                                productType,
+                                sourceVideoIds: sourceVideoIdsForBuild,
+                                catalogHtml,
+                                brandTokens,
+                                creatorHandle: creator.handle,
+                                creatorDisplayName: creator.display_name || creator.handle,
+                                topicQuery,
+                                originalRequest: message,
+                                creatorDnaContext,
+                                designCanonContext,
+                                directionId: creativeDirection.id,
+                                contentContext,
+                                maxIterations: 1,
+                                qualityWeights: designCanon.qualityWeights,
+                                preferredModel: 'kimi',
+                            }),
+                            CRITIC_LOOP_TIMEOUT_MS,
+                            'Kimi critic loop'
+                        );
+                        stageTimingsMs.critic = Date.now() - criticStart;
 
                         fullHtml = criticResult.html;
                         qualityEvaluation = criticResult.evaluation;
@@ -1215,9 +928,11 @@ Generate the complete HTML document now.`;
                         criticModels = criticResult.modelTrail;
                         send({ type: 'html_chunk', html: fullHtml });
                     } catch (criticError) {
+                        stageTimingsMs.critic = stageTimingsMs.critic || CRITIC_LOOP_TIMEOUT_MS;
                         log.warn('Evergreen critic loop failed; keeping best available HTML', {
                             error: criticError instanceof Error ? criticError.message : 'Unknown critic error',
-                            productId: product.id,
+                            creatorId: creator.id,
+                            topicQuery,
                         });
                     }
                 }
@@ -1229,8 +944,49 @@ Generate the complete HTML document now.`;
                 });
                 send({ type: 'html_complete', html: fullHtml });
 
+                if (!qualityEvaluation.overallPassed) {
+                    send({
+                        type: 'error',
+                        message: 'Build failed hard quality gates. The draft preview was generated, but nothing was saved.',
+                        manualEditRequired: true,
+                        qualityScore: qualityEvaluation.overallScore,
+                        failingGates: qualityEvaluation.failingGates,
+                        candidateHtml: fullHtml,
+                    });
+                    log.warn('Rejected product build that failed hard quality gates', {
+                        creatorId: creator.id,
+                        productType,
+                        topicQuery,
+                        qualityScore: qualityEvaluation.overallScore,
+                        failingGates: qualityEvaluation.failingGates,
+                    });
+                    closeStream();
+                    return;
+                }
+
                 // Save version
                 send({ type: 'status', message: '💾 Saving your product...', phase: 'saving' });
+                ensureActiveRequest();
+
+                const { data: product, error: productError } = await db
+                    .from('products')
+                    .insert({
+                        creator_id: creator.id,
+                        slug,
+                        type: productType,
+                        title: productTitle,
+                        description: `Created from: "${message}"`,
+                        status: 'draft',
+                        access_type: 'paid',
+                        price_cents: 999,
+                        currency: 'usd',
+                    })
+                    .select('id')
+                    .single();
+
+                if (productError || !product) {
+                    throw new Error(`Failed to create product: ${productError?.message || 'Unknown error'}`);
+                }
 
                 const gateScores = Object.fromEntries(
                     Object.entries(qualityEvaluation.gates).map(([key, gate]) => [
@@ -1244,7 +1000,7 @@ Generate the complete HTML document now.`;
                     ])
                 );
 
-                const { data: version } = await db
+                const { data: version, error: versionError } = await db
                     .from('product_versions')
                     .insert({
                         product_id: product.id,
@@ -1254,12 +1010,22 @@ Generate the complete HTML document now.`;
                             productType,
                             title: productTitle,
                             creatorHandle: creator.handle,
-                            videosUsed: groundedVideoIds.length,
+                            videosUsed: sourceVideoIdsForBuild.length,
+                            sourceVideoIdsUsed: sourceVideoIdsForBuild,
+                            brandTokens,
                             rerankerConfidence: reranked.confidence,
                             coverageGaps: reranked.coverageGaps,
                             sourceEvidenceWordCount,
                             generatedWordCount: countHtmlWords(fullHtml),
+                            htmlBuildMode,
+                            kimiBuilderIterations: pipelineResult.sectionBlocks.length,
+                            kimiBuilderValidationTrail: [],
+                            kimiLibrarianSelectedVideoIds: pipelineResult.librarianPack.selectedVideoIds,
+                            kimiArchitectSectionIds: pipelineResult.architectPlan.sections.map((section) => section.id),
+                            stageTimingsMs,
                             designCanonVersion: designCanon.version,
+                            qualityWeights: designCanon.qualityWeights,
+                            creatorDisplayName: creator.display_name,
                             creativeDirectionId: creativeDirection.id,
                             creativeDirectionName: creativeDirection.name,
                             qualityOverallScore: qualityEvaluation.overallScore,
@@ -1273,16 +1039,36 @@ Generate the complete HTML document now.`;
                         },
                         dsl_json: {},
                         generated_html: fullHtml,
-                        source_video_ids: groundedVideoIds,
+                        source_video_ids: sourceVideoIdsForBuild,
                     })
                     .select('id')
                     .single();
 
-                if (version) {
+                if (versionError || !version) {
                     await db
+                        .from('products')
+                        .delete()
+                        .eq('id', product.id)
+                        .is('active_version_id', null);
+                    throw new Error(`Failed to save product version: ${versionError?.message || 'Unknown error'}`);
+                }
+
+                const { error: activateError } = await db
                         .from('products')
                         .update({ active_version_id: version.id })
                         .eq('id', product.id);
+
+                if (activateError) {
+                    await db
+                        .from('product_versions')
+                        .delete()
+                        .eq('id', version.id);
+                    await db
+                        .from('products')
+                        .delete()
+                        .eq('id', product.id)
+                        .is('active_version_id', null);
+                    throw new Error(`Failed to activate product version: ${activateError.message}`);
                 }
 
                 send({
@@ -1291,7 +1077,7 @@ Generate the complete HTML document now.`;
                     versionId: version?.id,
                     title: productTitle,
                     productType,
-                    videosUsed: groundedVideoIds.length,
+                    videosUsed: sourceVideoIdsForBuild.length,
                     qualityScore: qualityEvaluation.overallScore,
                 });
 
@@ -1299,7 +1085,7 @@ Generate the complete HTML document now.`;
                     productId: product.id,
                     title: productTitle,
                     htmlLength: fullHtml.length,
-                    videosUsed: groundedVideoIds.length,
+                    videosUsed: sourceVideoIdsForBuild.length,
                     confidence: reranked.confidence,
                     qualityScore: qualityEvaluation.overallScore,
                     qualityPassed: qualityEvaluation.overallPassed,
@@ -1307,11 +1093,13 @@ Generate the complete HTML document now.`;
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'Unknown error';
-                log.error('Build stream error', { error: msg });
-                send({ type: 'error', message: msg });
+                if (!requestAborted) {
+                    log.error('Build stream error', { error: msg });
+                    send({ type: 'error', message: msg });
+                }
             }
 
-            controller.close();
+            closeStream();
         },
     });
 

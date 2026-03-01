@@ -7,6 +7,7 @@ import { scrapeCreatorsProvider } from '@/lib/import/scrapecreators';
 import { createJob, updateJob } from '@/lib/import/jobs';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
+import { persistCreatorAvatarToStorage } from '@/lib/creators/avatar-storage';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
@@ -83,15 +84,32 @@ async function runTikTokImport(
         // 1. Fetch profile metadata
         const profile = await scrapeCreatorsProvider.getProfile(handle);
 
-        // Update creator with imported profile data (if they don't have bio/avatar yet)
-        await supabase
+        const mirroredAvatarUrl = await persistCreatorAvatarToStorage({
+            sourceAvatarUrl: profile.avatarUrl,
+            creatorKey: creatorId,
+            handle,
+        });
+
+        const { data: existingCreator } = await supabase
             .from('creators')
-            .update({
-                bio: profile.bio,
-                avatar_url: profile.avatarUrl,
-            })
+            .select('bio')
             .eq('id', creatorId)
-            .is('bio', null); // Only if empty
+            .maybeSingle();
+
+        const creatorUpdate: Record<string, string | null> = {};
+        if (!existingCreator?.bio && profile.bio) {
+            creatorUpdate.bio = profile.bio;
+        }
+        if (mirroredAvatarUrl) {
+            creatorUpdate.avatar_url = mirroredAvatarUrl;
+        }
+
+        if (Object.keys(creatorUpdate).length > 0) {
+            await supabase
+                .from('creators')
+                .update(creatorUpdate)
+                .eq('id', creatorId);
+        }
 
         // 2. Fetch videos (paginated via AsyncGenerator)
         const videoGenerator = scrapeCreatorsProvider.listVideos(handle, {

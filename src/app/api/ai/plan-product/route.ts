@@ -73,7 +73,7 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Step 2: Rerank via Claude Sonnet 4.5
+        // Step 2: Rerank via Kimi K2.5
         const reranked = await rerankCandidates(
             searchResults.map((r) => ({
                 videoId: r.videoId,
@@ -115,7 +115,7 @@ export async function POST(request: Request) {
             (transcripts || []).map((t) => [t.video_id, t.transcript_text])
         );
 
-        // Step 4: Generate Build Packet via Claude Sonnet 4.5
+        // Step 4: Generate Build Packet via Kimi K2.5
         const brandTokens = (creator.brand_tokens || {
             primaryColor: '#6366f1',
             secondaryColor: '#8b5cf6',

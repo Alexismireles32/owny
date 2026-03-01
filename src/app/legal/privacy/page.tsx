@@ -28,7 +28,7 @@ export default function PrivacyPolicy() {
 
                     <section>
                         <h2 className="text-xl font-semibold">3. AI Processing</h2>
-                        <p>Your imported video transcripts are processed by AI models (OpenAI, Anthropic, Moonshot) to generate clip cards, embeddings, and product content. This data is processed per the respective AI providers&apos; data processing terms.</p>
+                        <p>Your imported video transcripts are processed by AI models (OpenAI and Moonshot) to generate clip cards, embeddings, and product content. This data is processed per the respective AI providers&apos; data processing terms.</p>
                     </section>
 
                     <section>

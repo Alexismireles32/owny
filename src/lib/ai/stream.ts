@@ -52,7 +52,7 @@ export async function* streamWithToolCalls(
         temperature: number;
         max_tokens: number;
         top_p?: number;
-        extra_body?: Record<string, unknown>;
+        thinking?: { type: 'disabled' };
     }
 ): AsyncGenerator<StreamEvent> {
     try {
@@ -65,7 +65,7 @@ export async function* streamWithToolCalls(
             top_p: config.top_p ?? 0.95,
             max_tokens: config.max_tokens,
             stream: true,
-            ...(config.extra_body || {}),
+            ...(config.thinking ? { thinking: config.thinking } : {}),
         });
 
         let contentBuffer = '';

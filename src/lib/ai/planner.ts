@@ -1,10 +1,9 @@
 // src/lib/ai/planner.ts
-// PRD §5.5 — Build Packet generation via Claude Sonnet 4.5
+// PRD §5.5 — Build Packet generation via Kimi K2.5
 
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { BuildPacket, ProductType, BrandTokens, SourceVideo } from '@/types/build-packet';
 import { z } from 'zod';
+import { requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 
 interface PlannerInput {
     productType: ProductType;
@@ -95,8 +94,6 @@ The JSON must have these top-level keys:
  * Generate a Build Packet from creator request + selected videos.
  */
 export async function generateBuildPacket(input: PlannerInput): Promise<BuildPacket> {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-
     for (let attempt = 1; attempt <= 2; attempt++) {
         const sourceLimit = attempt === 1 ? input.selectedVideos.length : Math.min(input.selectedVideos.length, 40);
         const sourcesContext = input.selectedVideos.slice(0, sourceLimit).map((v) => ({
@@ -104,6 +101,7 @@ export async function generateBuildPacket(input: PlannerInput): Promise<BuildPac
             title: v.title,
             reason: v.reason,
             clipCard: v.clipCard,
+            transcriptSnippet: v.transcriptSnippet || null,
         }));
 
         const userMessage = `Product Type: ${input.productType}
@@ -125,23 +123,15 @@ ${JSON.stringify(input.voiceProfile, null, 1)}` : ''}
 Selected Source Videos (${sourcesContext.length}):
 ${JSON.stringify(sourcesContext, null, 1)}
 
-Generate a complete Build Packet JSON for this product. The content sections must contain REAL, SUBSTANTIAL written content — not summaries or placeholders. Write as if you ARE this creator.`;
+        Generate a complete Build Packet JSON for this product. The content sections must contain REAL, SUBSTANTIAL written content — not summaries or placeholders. Write as if you ARE this creator.`;
 
         try {
-            const response = await anthropic.messages.parse({
-                model: 'claude-sonnet-4-6',
-                max_tokens: 8192,
-                system: PLANNER_SYSTEM_PROMPT,
-                messages: [{ role: 'user', content: userMessage }],
-                output_config: {
-                    format: zodOutputFormat(BuildPacketSchema),
-                },
+            const parsed = await requestKimiStructuredObject({
+                systemPrompt: PLANNER_SYSTEM_PROMPT,
+                userPrompt: userMessage,
+                schema: BuildPacketSchema,
+                maxTokens: 12000,
             });
-
-            const parsed = response.parsed_output;
-            if (!parsed) {
-                throw new Error('Planner returned empty structured output');
-            }
 
             const packet = parsed as unknown as BuildPacket;
             validateBuildPacket(packet);
@@ -172,14 +162,12 @@ function validateBuildPacket(packet: BuildPacket): void {
     if (!packet.content) errors.push('Missing content');
     if (!packet.designIntent) errors.push('Missing designIntent');
 
-    // Validate content type matches productType
     if (packet.content) {
         const contentType = packet.content.type;
         if (contentType !== packet.productType) {
             errors.push(`Content type "${contentType}" doesn't match productType "${packet.productType}"`);
         }
 
-        // Type-specific validation
         switch (contentType) {
             case 'pdf_guide':
                 if (!('chapters' in packet.content) || !Array.isArray(packet.content.chapters)) {
@@ -204,7 +192,6 @@ function validateBuildPacket(packet: BuildPacket): void {
         }
     }
 
-    // Validate sources have videoIds
     if (packet.sources) {
         for (const src of packet.sources as SourceVideo[]) {
             if (!src.videoId) errors.push('Source missing videoId');

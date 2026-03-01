@@ -3,6 +3,13 @@
 
 import OpenAI from 'openai';
 
+export const DEFAULT_KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.5';
+export type MoonshotThinkingConfig = { thinking?: { type: 'disabled' } };
+export type MoonshotChatCompletionRequest =
+    OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & MoonshotThinkingConfig;
+export type MoonshotChatCompletionStreamingRequest =
+    OpenAI.Chat.ChatCompletionCreateParamsStreaming & MoonshotThinkingConfig;
+
 /**
  * Kimi K2.5 client — uses OpenAI SDK pointed at Moonshot API.
  * All builder calls go through this client.
@@ -17,11 +24,11 @@ export const kimiClient = new OpenAI({
  * Used for: Product DSL generation, block improvements.
  */
 export const BUILDER_CONFIG = {
-    model: 'kimi-k2.5',
+    model: DEFAULT_KIMI_MODEL,
     temperature: 0.6,
     top_p: 0.95,
     max_tokens: 16384,
-    extra_body: { thinking: { type: 'disabled' } },
+    thinking: { type: 'disabled' as const },
 } as const;
 
 /**
@@ -29,9 +36,9 @@ export const BUILDER_CONFIG = {
  * Used for: Complex multi-step reasoning (future research agent).
  */
 export const BUILDER_THINKING_CONFIG = {
-    model: 'kimi-k2.5',
-    temperature: 1.0,
+    model: DEFAULT_KIMI_MODEL,
+    temperature: 0.6,
     top_p: 0.95,
     max_tokens: 16384,
-    // thinking enabled by default (no extra_body needed)
+    // thinking enabled by default
 } as const;

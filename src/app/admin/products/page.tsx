@@ -1,6 +1,7 @@
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { formatBuildModeLabel, formatStageTimingSummary, parseBuildMetadata } from '@/lib/products/build-metadata';
 
 export default async function AdminProductsPage() {
     const supabase = await createClient();
@@ -26,11 +27,33 @@ export default async function AdminProductsPage() {
     const { data: products } = await adminSupabase
         .from('products')
         .select(`
-            id, title, slug, type, status, price_cents, currency, created_at, published_at,
+            id, title, slug, type, status, price_cents, currency, created_at, published_at, active_version_id,
             creators!inner(handle, display_name)
         `)
         .order('created_at', { ascending: false })
         .limit(200);
+
+    const activeVersionIds = (products || [])
+        .map((product) => product.active_version_id)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    let activeVersionById = new Map<string, { versionNumber: number; buildPacket: Record<string, unknown> | null }>();
+    if (activeVersionIds.length > 0) {
+        const { data: activeVersions } = await adminSupabase
+            .from('product_versions')
+            .select('id, version_number, build_packet')
+            .in('id', activeVersionIds);
+
+        activeVersionById = new Map(
+            (activeVersions || []).map((version) => [
+                version.id,
+                {
+                    versionNumber: version.version_number,
+                    buildPacket: version.build_packet as Record<string, unknown> | null,
+                },
+            ])
+        );
+    }
 
     // Check for active takedowns
     const { data: takedowns } = await adminSupabase
@@ -90,6 +113,7 @@ export default async function AdminProductsPage() {
                                 <th className="text-left px-4 py-3 font-medium">Product</th>
                                 <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Creator</th>
                                 <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Type</th>
+                                <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Build</th>
                                 <th className="text-left px-4 py-3 font-medium">Status</th>
                                 <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Price</th>
                                 <th className="text-left px-4 py-3 font-medium">Actions</th>
@@ -100,6 +124,12 @@ export default async function AdminProductsPage() {
                                 const creator = product.creators as unknown as { handle: string; display_name: string };
                                 const isTakenDown = takedownMap.has(product.id);
                                 const takedownReason = takedownMap.get(product.id);
+                                const activeVersion = product.active_version_id
+                                    ? activeVersionById.get(product.active_version_id)
+                                    : null;
+                                const buildMetadata = parseBuildMetadata(activeVersion?.buildPacket || null);
+                                const buildModeLabel = formatBuildModeLabel(buildMetadata?.htmlBuildMode || null);
+                                const timingLabel = buildMetadata ? formatStageTimingSummary(buildMetadata.stageTimingsMs) : null;
 
                                 return (
                                     <tr key={product.id} className="border-b last:border-0 hover:bg-slate-50/50">
@@ -115,10 +145,24 @@ export default async function AdminProductsPage() {
                                         <td className="px-4 py-3 hidden md:table-cell">
                                             <span className="text-xs">{product.type.replace('_', ' ')}</span>
                                         </td>
+                                        <td className="px-4 py-3 hidden lg:table-cell">
+                                            <div className="space-y-0.5">
+                                                <p className="text-xs font-medium text-slate-700">{buildModeLabel || 'n/a'}</p>
+                                                <p className="text-[11px] text-slate-500">
+                                                    {typeof activeVersion?.versionNumber === 'number' ? `v${activeVersion.versionNumber}` : 'No active version'}
+                                                    {timingLabel ? ` · ${timingLabel}` : ''}
+                                                </p>
+                                            </div>
+                                        </td>
                                         <td className="px-4 py-3">
                                             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColor(product.status)}`}>
                                                 {product.status}
                                             </span>
+                                            {typeof buildMetadata?.qualityOverallScore === 'number' && (
+                                                <p className="mt-1 text-[11px] text-slate-500">
+                                                    Quality {buildMetadata.qualityOverallScore}/100
+                                                </p>
+                                            )}
                                             {isTakenDown && (
                                                 <p className="text-xs text-red-500 mt-1">Takedown: {takedownReason}</p>
                                             )}
@@ -140,7 +184,7 @@ export default async function AdminProductsPage() {
                             })}
                             {(!products || products.length === 0) && (
                                 <tr>
-                                    <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                                    <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
                                         No products yet.
                                     </td>
                                 </tr>

@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { emitPipelineAlert, type PipelineTrigger } from '@/lib/inngest/reliability';
 import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
+import { persistCreatorAvatarToStorage } from '@/lib/creators/avatar-storage';
 
 const HANDLE_REGEX = /^[a-zA-Z0-9._]{1,24}$/;
 const RESTARTABLE_STATES = new Set(['pending', 'error', 'insufficient_content']);
@@ -237,7 +238,7 @@ export async function POST(request: Request) {
         // 2.5. Check if THIS USER already has a creator (idx_creators_profile is unique)
         const { data: userCreator } = await db
             .from('creators')
-            .select('id, handle')
+            .select('id, handle, avatar_url')
             .eq('profile_id', user.id)
             .maybeSingle();
 
@@ -249,11 +250,17 @@ export async function POST(request: Request) {
                 newHandle: handle,
             });
 
+            const mirroredAvatarUrl = await persistCreatorAvatarToStorage({
+                sourceAvatarUrl: profile.avatarUrl,
+                creatorKey: userCreator.id,
+                handle,
+            });
+
             await db.from('creators').update({
                 handle,
                 display_name: profile.nickname,
                 bio: profile.bio,
-                avatar_url: profile.avatarUrl,
+                avatar_url: mirroredAvatarUrl ?? userCreator.avatar_url,
             }).eq('id', userCreator.id);
 
             // Try to set pipeline columns too
@@ -282,6 +289,12 @@ export async function POST(request: Request) {
             });
         }
 
+        const mirroredAvatarUrl = await persistCreatorAvatarToStorage({
+            sourceAvatarUrl: profile.avatarUrl,
+            creatorKey: user.id,
+            handle,
+        });
+
         // 4. Insert creator with BASE columns ONLY (these always exist)
         const { data: newCreator, error: insertError } = await db
             .from('creators')
@@ -290,7 +303,7 @@ export async function POST(request: Request) {
                 handle,
                 display_name: profile.nickname,
                 bio: profile.bio,
-                avatar_url: profile.avatarUrl,
+                avatar_url: mirroredAvatarUrl,
             })
             .select('id')
             .single();

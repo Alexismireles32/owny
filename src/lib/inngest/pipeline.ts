@@ -12,10 +12,9 @@ import {
 } from '@/lib/scraping/scrapeCreators';
 import { log } from '@/lib/logger';
 import { indexVideo } from '@/lib/indexing/orchestrator';
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { triggerImportCompletedEmail, triggerImportFailedEmail } from '@/lib/email/triggers';
+import { requestKimiStructuredArray, requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 import {
     beginPipelineRun,
     completePipelineRun,
@@ -519,18 +518,12 @@ export const scrapePipeline = inngest.createFunction(
                 let clusters: { label: string; videoIds: string[]; summary: string; productType: string; confidence: number }[] = [];
 
                 try {
-                    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-                    const response = await anthropic.messages.parse({
-                        model: 'claude-haiku-4-5-20241022',
-                        max_tokens: 2048,
-                        system: `You are a content analyst. Given a list of video titles and transcript snippets, group them into 3-7 topic clusters. For each cluster, provide a label, summary, list of video IDs, recommended product type (pdf_guide, mini_course, challenge_7day, or checklist_toolkit), and confidence score (0-1).\n\nOutput ONLY valid JSON array, no markdown:\n[{"label":"...","videoIds":["..."],"summary":"...","productType":"...","confidence":0.8}]`,
-                        messages: [{ role: 'user', content: JSON.stringify(videoSummaries) }],
-                        output_config: {
-                            format: zodOutputFormat(ClusterResultsSchema),
-                        },
+                    const parsedClusters = await requestKimiStructuredArray({
+                        systemPrompt: `You are a content analyst. Given a list of video titles and transcript snippets, group them into 3-7 topic clusters. For each cluster, provide a label, summary, list of video IDs, recommended product type (pdf_guide, mini_course, challenge_7day, or checklist_toolkit), and confidence score (0-1).\n\nOutput ONLY valid JSON array, no markdown:\n[{"label":"...","videoIds":["..."],"summary":"...","productType":"...","confidence":0.8}]`,
+                        userPrompt: JSON.stringify(videoSummaries),
+                        schema: ClusterResultsSchema,
+                        maxTokens: 4096,
                     });
-
-                    const parsedClusters = response.parsed_output;
                     if (!parsedClusters || parsedClusters.length === 0) {
                         throw new Error('AI clustering returned empty structured output');
                     }
@@ -640,25 +633,16 @@ export const scrapePipeline = inngest.createFunction(
                 let brandTokens: Record<string, unknown> = {};
 
                 try {
-                    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-                    const response = await anthropic.messages.parse({
-                        model: 'claude-haiku-4-5-20241022',
-                        max_tokens: 1024,
-                        system: `Analyze these video transcripts from a social media creator and extract:
+                    const parsed = await requestKimiStructuredObject({
+                        systemPrompt: `Analyze these video transcripts from a social media creator and extract:
 1. Their voice profile (how they speak/write, vocabulary, tone, catchphrases, style)
 2. Brand recommendations (colors, mood, font suggestion)
 
 Output ONLY valid JSON:\n{"voiceProfile":{"tone":"...","vocabulary":"simple|intermediate|advanced","speakingStyle":"...","catchphrases":["..."],"personality":"...","contentFocus":"..."},"brandTokens":{"primaryColor":"#hex","secondaryColor":"#hex","backgroundColor":"#hex","textColor":"#hex","fontFamily":"inter|outfit|roboto|playfair","mood":"clean|fresh|bold|premium|energetic"}}`,
-                        messages: [{ role: 'user', content: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}` }],
-                        output_config: {
-                            format: zodOutputFormat(VoiceBrandSchema),
-                        },
+                        userPrompt: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}`,
+                        schema: VoiceBrandSchema,
+                        maxTokens: 2048,
                     });
-
-                    const parsed = response.parsed_output;
-                    if (!parsed) {
-                        throw new Error('AI voice/brand extraction returned empty structured output');
-                    }
 
                     voiceProfile = {
                         ...parsed.voiceProfile,

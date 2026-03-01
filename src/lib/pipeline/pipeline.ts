@@ -3,8 +3,6 @@
 // Upgraded to keep quality close to the Inngest multi-step pipeline.
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import {
     fetchTikTokVideos,
@@ -18,6 +16,7 @@ import { indexVideo } from '@/lib/indexing/orchestrator';
 import { chunkAndStoreTranscript } from '@/lib/indexing/chunker';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
+import { requestKimiStructuredArray, requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 
 type PipelineProductType = ProductType;
 
@@ -518,22 +517,16 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
             transcript: row.transcript_text.slice(0, 320),
         }));
 
-        if (process.env.ANTHROPIC_API_KEY && videoSummaries.length > 0) {
+        if (process.env.KIMI_API_KEY && videoSummaries.length > 0) {
             try {
-                const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-                const response = await anthropic.messages.parse({
-                    model: 'claude-haiku-4-5-20241022',
-                    max_tokens: 2048,
-                    system: `You are a content analyst. Group these creator videos into 3-7 meaningful topic clusters.
+                const parsed = await requestKimiStructuredArray({
+                    systemPrompt: `You are a content analyst. Group these creator videos into 3-7 meaningful topic clusters.
 Return ONLY valid JSON array:
-[{"label":"...","videoIds":["..."],"summary":"...","productType":"pdf_guide|mini_course|challenge_7day|checklist_toolkit","confidence":0.0}]`,
-                    messages: [{ role: 'user', content: JSON.stringify(videoSummaries) }],
-                    output_config: {
-                        format: zodOutputFormat(ClusterResultsSchema),
-                    },
+ [{"label":"...","videoIds":["..."],"summary":"...","productType":"pdf_guide|mini_course|challenge_7day|checklist_toolkit","confidence":0.0}]`,
+                    userPrompt: JSON.stringify(videoSummaries),
+                    schema: ClusterResultsSchema,
+                    maxTokens: 4096,
                 });
-
-                const parsed = response.parsed_output || [];
                 const allowedVideoIds = new Set(videoSummaries.map((video) => video.id));
                 clusters = parsed
                     .map((cluster) => ({
@@ -624,37 +617,29 @@ Return ONLY valid JSON array:
             .map((video) => video.transcript_text.slice(0, 1200))
             .join('\n---\n');
 
-        if (process.env.ANTHROPIC_API_KEY && sampleTranscripts.length > 0) {
+        if (process.env.KIMI_API_KEY && sampleTranscripts.length > 0) {
             try {
-                const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-                const response = await anthropic.messages.parse({
-                    model: 'claude-haiku-4-5-20241022',
-                    max_tokens: 1024,
-                    system: `Analyze this creator's transcripts and return ONLY valid JSON:
+                const parsed = await requestKimiStructuredObject({
+                    systemPrompt: `Analyze this creator's transcripts and return ONLY valid JSON:
 {"voiceProfile":{"tone":"...","vocabulary":"simple|intermediate|advanced","speakingStyle":"...","catchphrases":["..."],"personality":"...","contentFocus":"..."},"brandTokens":{"primaryColor":"#hex","secondaryColor":"#hex","backgroundColor":"#hex","textColor":"#hex","fontFamily":"inter|outfit|roboto|playfair","mood":"clean|fresh|bold|premium|energetic"}}`,
-                    messages: [{ role: 'user', content: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}` }],
-                    output_config: {
-                        format: zodOutputFormat(VoiceBrandSchema),
-                    },
+                    userPrompt: `Creator topics: ${clusterLabels.join(', ')}\n\nTranscripts:\n${sampleTranscripts}`,
+                    schema: VoiceBrandSchema,
+                    maxTokens: 2048,
                 });
-
-                const parsed = response.parsed_output;
-                if (parsed) {
-                    voiceProfile = {
-                        ...parsed.voiceProfile,
-                        total_words: dedupedRows.reduce(
-                            (sum, row) => sum + row.transcript_text.split(/\s+/).filter(Boolean).length,
-                            0
-                        ),
-                        total_transcripts: dedupedRows.length,
-                        top_topics: clusterLabels.slice(0, 5),
-                        extracted_at: new Date().toISOString(),
-                    };
-                    brandTokens = {
-                        ...buildDefaultBrandTokens(),
-                        ...parsed.brandTokens,
-                    };
-                }
+                voiceProfile = {
+                    ...parsed.voiceProfile,
+                    total_words: dedupedRows.reduce(
+                        (sum, row) => sum + row.transcript_text.split(/\s+/).filter(Boolean).length,
+                        0
+                    ),
+                    total_transcripts: dedupedRows.length,
+                    top_topics: clusterLabels.slice(0, 5),
+                    extracted_at: new Date().toISOString(),
+                };
+                brandTokens = {
+                    ...buildDefaultBrandTokens(),
+                    ...parsed.brandTokens,
+                };
             } catch (error) {
                 log.warn('Pipeline 3: AI voice/brand extraction failed, using defaults', {
                     creatorId,

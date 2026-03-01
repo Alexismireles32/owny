@@ -36,7 +36,38 @@ export async function GET() {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ products });
+    const activeVersionIds = (products || [])
+        .map((product) => product.active_version_id)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    let versionById = new Map<string, { version_number: number; build_packet: Record<string, unknown> | null }>();
+    if (activeVersionIds.length > 0) {
+        const { data: activeVersions } = await supabase
+            .from('product_versions')
+            .select('id, version_number, build_packet')
+            .in('id', activeVersionIds);
+
+        versionById = new Map(
+            (activeVersions || []).map((version) => [
+                version.id,
+                {
+                    version_number: version.version_number,
+                    build_packet: version.build_packet as Record<string, unknown> | null,
+                },
+            ])
+        );
+    }
+
+    return NextResponse.json({
+        products: (products || []).map((product) => {
+            const activeVersion = product.active_version_id ? versionById.get(product.active_version_id) : null;
+            return {
+                ...product,
+                active_version_number: activeVersion?.version_number || null,
+                active_build_packet: activeVersion?.build_packet || null,
+            };
+        }),
+    });
 }
 
 export async function POST(request: Request) {

@@ -1,11 +1,30 @@
 // POST /api/products/improve — SSE streaming endpoint for follow-up product edits
-// Takes current HTML + instruction, streams the improved version
+// Uses staged Kimi section refinement instead of monolithic whole-page rewrites
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import Anthropic from '@anthropic-ai/sdk';
-import { postProcessHTML } from '@/lib/ai/router';
+import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
+import { buildDesignCanonContext, chooseCreativeDirection, getEvergreenDesignCanon } from '@/lib/ai/design-canon';
+import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
+import {
+    chooseStricterImproveBaseline,
+    getImproveSaveRejection,
+    parseQualityWeights,
+    parseImproveQualitySnapshot,
+    toImproveQualitySnapshot,
+} from '@/lib/ai/improve-save-policy';
+import { improveProductWithKimiStages } from '@/lib/ai/kimi-product-improve';
+import { evaluateProductQuality } from '@/lib/ai/quality-gates';
 import { log } from '@/lib/logger';
+import { loadCreatorCatalogHtml } from '@/lib/products/catalog-html';
+import type { ProductType } from '@/types/build-packet';
+
+interface ActiveVersionRow {
+    id: string;
+    version_number: number;
+    build_packet: Record<string, unknown> | null;
+    source_video_ids: string[] | null;
+}
 
 function getServiceDb() {
     return createServiceClient(
@@ -14,43 +33,43 @@ function getServiceDb() {
     );
 }
 
-const HTML_IMPROVE_PROMPT = `You are a Digital Product Editor. You receive an HTML page containing a real digital product (a guide, course, challenge, or toolkit) and an improvement instruction.
+const IMPROVE_TIMEOUT_MS = 240_000;
+const CRITIC_LOOP_TIMEOUT_MS = 70_000;
 
-RULES:
-- Output ONLY the complete improved HTML page. No commentary, no markdown fences.
-- This is an ACTUAL digital product — NOT a landing page. Keep it as product content.
-- Make SURGICAL, TARGETED changes based on the instruction.
-- DO NOT rewrite or regenerate sections that the instruction doesn't mention.
-- Keep all unchanged sections EXACTLY as they are, character for character.
-- Maintain all Tailwind classes, Alpine.js behavior, and CDN script tags.
-- Preserve the overall product structure (chapters, lessons, days, categories).
-- If asked to add content, add REAL, substantive content — not placeholder text.
-- If asked to change tone, update the writing style throughout while keeping facts intact.
-- If asked to fix a specific section, ONLY edit that section.
-- If asked to add a chapter/lesson, insert it in the correct position without disrupting existing content.
-- NEVER remove existing content unless explicitly asked to delete something.`;
+function normalizeProductType(value: unknown): ProductType {
+    switch (value) {
+        case 'mini_course':
+        case 'challenge_7day':
+        case 'checklist_toolkit':
+        case 'pdf_guide':
+            return value;
+        default:
+            return 'pdf_guide';
+    }
+}
 
-/** Extract a numbered list of section IDs and headings from HTML for targeted edits */
-function extractSectionList(html: string): string {
-    const sections: string[] = [];
-    // Match section IDs
-    const sectionIdRegex = /<section[^>]*id="([^"]+)"[^>]*>/gi;
-    let match;
-    while ((match = sectionIdRegex.exec(html)) !== null) {
-        sections.push(`- Section: #${match[1]}`);
+function extractHtmlTextContext(html: string): string {
+    return html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 12000);
+}
+
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let handle: NodeJS.Timeout | null = null;
+    try {
+        return await Promise.race([
+            work,
+            new Promise<T>((_, reject) => {
+                handle = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (handle) clearTimeout(handle);
     }
-    // Match h2 headings
-    const h2Regex = /<h2[^>]*>([^<]{3,80})/gi;
-    let h2Match;
-    let idx = 1;
-    while ((h2Match = h2Regex.exec(html)) !== null) {
-        const title = h2Match[1].replace(/&[^;]+;/g, '').trim();
-        if (title) {
-            sections.push(`- Heading ${idx}: "${title}"`);
-            idx++;
-        }
-    }
-    return sections.length > 0 ? sections.join('\n') : '(no named sections found)';
 }
 
 export async function POST(request: Request) {
@@ -90,7 +109,7 @@ export async function POST(request: Request) {
     const db = getServiceDb();
     const { data: product } = await db
         .from('products')
-        .select('id, creator_id, title')
+        .select('id, creator_id, title, type, status, active_version_id')
         .eq('id', productId)
         .eq('creator_id', creator.id)
         .single();
@@ -99,74 +118,208 @@ export async function POST(request: Request) {
         return new Response(JSON.stringify({ error: 'Product not found' }), { status: 404 });
     }
 
+    const { data: creatorProfile, error: creatorProfileError } = await db
+        .from('creators')
+        .select('id, handle, display_name, bio, brand_tokens, voice_profile')
+        .eq('id', creator.id)
+        .single();
+
+    if (creatorProfileError || !creatorProfile) {
+        return new Response(JSON.stringify({ error: creatorProfileError?.message || 'Creator profile not found' }), { status: 500 });
+    }
+
+    let activeVersion: ActiveVersionRow | null = null;
+
+    if (product.active_version_id) {
+        const { data: version } = await db
+            .from('product_versions')
+            .select('id, version_number, build_packet, source_video_ids')
+            .eq('id', product.active_version_id)
+            .maybeSingle();
+        activeVersion = (version as ActiveVersionRow | null) || null;
+    }
+
+    const { count: priorProductCount } = await db
+        .from('products')
+        .select('id', { count: 'exact', head: true })
+        .eq('creator_id', creator.id);
+
+    const productType = normalizeProductType(product.type);
+    const creatorDna = buildCreatorDNA({
+        handle: creatorProfile.handle,
+        displayName: creatorProfile.display_name,
+        bio: creatorProfile.bio,
+        voiceProfile: creatorProfile.voice_profile,
+        brandTokens: creatorProfile.brand_tokens,
+    });
+    const creatorDnaContext = buildCreatorDNAContext(creatorDna);
+    const designCanon = getEvergreenDesignCanon();
+    const creativeDirection = chooseCreativeDirection({
+        productType,
+        creatorId: creator.id,
+        topicQuery: `${product.title} ${instruction}`,
+        creatorMood: creatorDna.visual.mood,
+        priorProductCount: priorProductCount || 0,
+    });
+    const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
+    const priorBuildPacket = activeVersion?.build_packet || null;
+    const sourceVideoIds = Array.isArray(activeVersion?.source_video_ids) ? activeVersion!.source_video_ids : [];
+    const brandTokens = creatorProfile.brand_tokens as Record<string, unknown> | null;
+    const qualityWeights = parseQualityWeights(priorBuildPacket) || designCanon.qualityWeights;
+    const catalogHtml = await loadCreatorCatalogHtml(db, creator.id, { excludeProductId: productId });
+
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
         async start(controller) {
+            let closed = false;
+
+            const close = () => {
+                if (closed) return;
+                closed = true;
+                try {
+                    controller.close();
+                } catch {
+                    // already closed
+                }
+            };
+
             const send = (event: Record<string, unknown>) => {
+                if (closed) return;
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
             };
 
             try {
-                send({ type: 'status', message: '✏️ Improving your product...', phase: 'improving' });
+                send({ type: 'status', message: '🧭 Planning your edit with Kimi...', phase: 'planning' });
 
-                const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
-                let fullHtml = '';
+                const improveResult = await withTimeout(
+                    improveProductWithKimiStages({
+                        currentHtml,
+                        instruction,
+                        productType,
+                        creatorDisplayName: creatorProfile.display_name || creatorProfile.handle,
+                        creatorHandle: creatorProfile.handle,
+                        creatorDna,
+                    }),
+                    IMPROVE_TIMEOUT_MS,
+                    'Kimi staged improve'
+                );
 
-                try {
-                    const aiStream = anthropic.messages.stream({
-                        model: 'claude-sonnet-4-6',
-                        max_tokens: 16384,
-                        system: HTML_IMPROVE_PROMPT,
-                        messages: [{
-                            role: 'user',
-                            content: `Here is the current digital product HTML:\n\n${currentHtml}\n\nSECTIONS FOUND IN THIS DOCUMENT:\n${extractSectionList(currentHtml)}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document. Remember: this is a REAL product (guide/course/challenge/toolkit), not a landing page. Only modify what the instruction asks for — keep everything else EXACTLY the same.`,
-                        }],
+                let fullHtml = improveResult.html;
+                send({
+                    type: 'status',
+                    message: `🧠 Kimi refined ${improveResult.touchedSectionIds.length || 1} section(s).`,
+                    phase: 'building',
+                });
+                send({ type: 'html_chunk', html: fullHtml });
+
+                let qualityEvaluation = evaluateProductQuality({
+                    html: fullHtml,
+                    productType,
+                    sourceVideoIds,
+                    catalogHtml,
+                    brandTokens,
+                    creatorHandle: creatorProfile.handle,
+                    qualityWeights,
+                });
+                const currentQuality = evaluateProductQuality({
+                    html: currentHtml,
+                    productType,
+                    sourceVideoIds,
+                    catalogHtml,
+                    brandTokens,
+                    creatorHandle: creatorProfile.handle,
+                    qualityWeights,
+                });
+                const priorQuality = chooseStricterImproveBaseline(
+                    parseImproveQualitySnapshot(priorBuildPacket),
+                    toImproveQualitySnapshot(currentQuality)
+                );
+                let criticIterations = 0;
+                let criticModels: string[] = [];
+                const stageTimingsMs = { ...improveResult.stageTimingsMs } as Record<string, number>;
+
+                if (!qualityEvaluation.overallPassed) {
+                    send({
+                        type: 'status',
+                        message: '🧪 Running quality critic pass...',
+                        phase: 'building',
                     });
 
-                    let chunkCount = 0;
-
-                    for await (const event of aiStream) {
-                        if (event.type === 'content_block_delta' && 'delta' in event && event.delta.type === 'text_delta') {
-                            fullHtml += event.delta.text;
-                            chunkCount++;
-
-                            if (chunkCount % 3 === 0) {
-                                send({ type: 'html_chunk', html: fullHtml });
-                            }
-                        }
+                    try {
+                        const criticStart = Date.now();
+                        const criticResult = await withTimeout(
+                            runEvergreenCriticLoop({
+                                html: fullHtml,
+                                productType,
+                                sourceVideoIds,
+                                catalogHtml,
+                                brandTokens,
+                                creatorHandle: creatorProfile.handle,
+                                creatorDisplayName: creatorProfile.display_name || creatorProfile.handle,
+                                topicQuery: product.title,
+                                originalRequest: instruction,
+                                creatorDnaContext,
+                                designCanonContext,
+                                directionId: creativeDirection.id,
+                                contentContext: extractHtmlTextContext(currentHtml),
+                                maxIterations: 1,
+                                qualityWeights,
+                                preferredModel: 'kimi',
+                            }),
+                            CRITIC_LOOP_TIMEOUT_MS,
+                            'Kimi critic loop'
+                        );
+                        stageTimingsMs.critic = Date.now() - criticStart;
+                        fullHtml = criticResult.html;
+                        qualityEvaluation = criticResult.evaluation;
+                        criticIterations = criticResult.iterationsRun;
+                        criticModels = criticResult.modelTrail;
+                        send({ type: 'html_chunk', html: fullHtml });
+                    } catch (criticError) {
+                        stageTimingsMs.critic = stageTimingsMs.critic || CRITIC_LOOP_TIMEOUT_MS;
+                        log.warn('Improve critic loop failed; keeping staged improve result', {
+                            error: criticError instanceof Error ? criticError.message : 'Unknown critic error',
+                            productId,
+                        });
                     }
-                } catch (claudeErr) {
-                    log.error('Claude improve failed, trying Kimi', {
-                        error: claudeErr instanceof Error ? claudeErr.message : 'Unknown',
-                    });
-
-                    send({ type: 'status', message: '🔄 Switching to backup AI...', phase: 'fallback' });
-
-                    const OpenAI = (await import('openai')).default;
-                    const kimi = new OpenAI({
-                        apiKey: process.env.KIMI_API_KEY || '',
-                        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-                    });
-
-                    const result = await kimi.chat.completions.create({
-                        model: 'kimi-k2.5',
-                        messages: [
-                            { role: 'system', content: HTML_IMPROVE_PROMPT },
-                            {
-                                role: 'user',
-                                content: `Here is the current digital product HTML:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document.`,
-                            },
-                        ],
-                        temperature: 0.6,
-                        max_tokens: 16000,
-                    });
-
-                    fullHtml = result.choices[0]?.message?.content ?? '';
                 }
 
-                fullHtml = postProcessHTML(fullHtml);
+                send({
+                    type: 'status',
+                    message: `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'})`,
+                    phase: 'building',
+                });
                 send({ type: 'html_complete', html: fullHtml });
+
+                const saveRejection = getImproveSaveRejection({
+                    productStatus: product.status,
+                    previous: priorQuality,
+                    next: toImproveQualitySnapshot(qualityEvaluation),
+                });
+
+                if (saveRejection) {
+                    send({
+                        type: 'error',
+                        message: `${saveRejection} The preview was generated, but the saved version was left unchanged.`,
+                        manualEditRequired: true,
+                        qualityScore: qualityEvaluation.overallScore,
+                        failingGates: qualityEvaluation.failingGates,
+                        candidateHtml: fullHtml,
+                    });
+                    log.warn('Rejected improve save to protect active version quality', {
+                        productId,
+                        productStatus: product.status,
+                        priorScore: priorQuality.score,
+                        nextScore: qualityEvaluation.overallScore,
+                        priorPassed: priorQuality.passed,
+                        nextPassed: qualityEvaluation.overallPassed,
+                        priorFailingGateCount: priorQuality.failingGateCount,
+                        nextFailingGateCount: qualityEvaluation.failingGates.length,
+                    });
+                    close();
+                    return;
+                }
 
                 send({ type: 'status', message: '💾 Saving changes...', phase: 'saving' });
 
@@ -179,16 +332,43 @@ export async function POST(request: Request) {
                     .single();
 
                 const nextVersion = (latestVersion?.version_number || 0) + 1;
+                const gateScores = Object.fromEntries(
+                    Object.entries(qualityEvaluation.gates).map(([key, gate]) => [
+                        key,
+                        {
+                            score: gate.score,
+                            threshold: gate.threshold,
+                            passed: gate.passed,
+                            notes: gate.notes,
+                        },
+                    ])
+                );
 
                 const { data: version } = await db
                     .from('product_versions')
                     .insert({
                         product_id: productId,
                         version_number: nextVersion,
-                        build_packet: { improvementInstruction: instruction },
+                        build_packet: {
+                            ...(priorBuildPacket || {}),
+                            improvementInstruction: instruction,
+                            htmlBuildMode: improveResult.htmlBuildMode,
+                            improvedSectionIds: improveResult.touchedSectionIds,
+                            stageTimingsMs,
+                            brandTokens,
+                            creatorDisplayName: creatorProfile.display_name,
+                            creatorHandle: creatorProfile.handle,
+                            qualityWeights,
+                            qualityOverallScore: qualityEvaluation.overallScore,
+                            qualityOverallPassed: qualityEvaluation.overallPassed,
+                            qualityFailingGates: qualityEvaluation.failingGates,
+                            qualityGateScores: gateScores,
+                            criticIterations,
+                            criticModels,
+                        },
                         dsl_json: {},
                         generated_html: fullHtml,
-                        source_video_ids: [],
+                        source_video_ids: sourceVideoIds,
                     })
                     .select('id')
                     .single();
@@ -204,12 +384,18 @@ export async function POST(request: Request) {
                     type: 'complete',
                     productId,
                     versionId: version?.id,
+                    qualityScore: qualityEvaluation.overallScore,
+                    qualityPassed: qualityEvaluation.overallPassed,
+                    htmlBuildMode: improveResult.htmlBuildMode,
                 });
 
-                log.info('Product improved', {
+                log.info('Product improved via staged Kimi flow', {
                     productId,
-                    instruction: instruction.slice(0, 100),
+                    instruction: instruction.slice(0, 120),
+                    touchedSections: improveResult.touchedSectionIds,
                     htmlLength: fullHtml.length,
+                    qualityScore: qualityEvaluation.overallScore,
+                    qualityPassed: qualityEvaluation.overallPassed,
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -217,7 +403,7 @@ export async function POST(request: Request) {
                 send({ type: 'error', message: msg });
             }
 
-            controller.close();
+            close();
         },
     });
 
@@ -225,7 +411,7 @@ export async function POST(request: Request) {
         headers: {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
+            Connection: 'keep-alive',
         },
     });
 }

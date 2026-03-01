@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { ProductType } from '@/types/build-packet';
+import { DEFAULT_KIMI_MODEL, type MoonshotChatCompletionRequest } from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
 import { postProcessHTML } from '@/lib/ai/router';
 import {
@@ -26,6 +26,7 @@ interface CriticLoopInput {
     contentContext: string;
     maxIterations?: number;
     qualityWeights?: Partial<Record<QualityGateKey, number>>;
+    preferredModel?: 'kimi';
 }
 
 interface CriticLoopResult {
@@ -33,13 +34,6 @@ interface CriticLoopResult {
     evaluation: ProductQualityEvaluation;
     iterationsRun: number;
     modelTrail: string[];
-}
-
-function extractAnthropicText(response: Anthropic.Messages.Message): string {
-    return response.content
-        .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('');
 }
 
 async function reviseHtmlWithCritic(input: {
@@ -54,6 +48,7 @@ async function reviseHtmlWithCritic(input: {
     creatorHandle: string;
     creatorDisplayName: string;
     contentContext: string;
+    preferredModel: 'kimi';
 }): Promise<{ html: string; model: string }> {
     const systemPrompt = `You are the Owny Evergreen Quality Critic and Editor.
 
@@ -92,31 +87,34 @@ ${input.currentHtml}
 
 Return the full improved HTML now.`;
 
-    if (process.env.ANTHROPIC_API_KEY) {
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const response = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 16384,
-            system: systemPrompt,
-            messages: [{ role: 'user', content: userPrompt }],
+    const runKimi = async (): Promise<{ html: string; model: string }> => {
+        const kimi = new OpenAI({
+            apiKey: process.env.KIMI_API_KEY || '',
+            baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
         });
-        return { html: extractAnthropicText(response), model: 'claude-sonnet-4-6' };
-    }
+        const result = await kimi.chat.completions.create(
+            {
+                model: DEFAULT_KIMI_MODEL,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                thinking: { type: 'disabled' },
+                temperature: 0.6,
+                max_tokens: 16000,
+            } as MoonshotChatCompletionRequest
+        );
+        return { html: result.choices[0]?.message?.content ?? '', model: DEFAULT_KIMI_MODEL };
+    };
 
-    const kimi = new OpenAI({
-        apiKey: process.env.KIMI_API_KEY || '',
-        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-    });
-    const result = await kimi.chat.completions.create({
-        model: 'kimi-k2.5',
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.45,
-        max_tokens: 16000,
-    });
-    return { html: result.choices[0]?.message?.content ?? '', model: 'kimi-k2.5' };
+    try {
+        return await runKimi();
+    } catch (error) {
+        log.warn('Kimi critic pass failed', {
+            error: error instanceof Error ? error.message : 'Unknown Kimi critic error',
+        });
+        throw error;
+    }
 }
 
 function isEvaluationBetter(
@@ -171,6 +169,7 @@ export async function runEvergreenCriticLoop(input: CriticLoopInput): Promise<Cr
             creatorHandle: input.creatorHandle,
             creatorDisplayName: input.creatorDisplayName,
             contentContext: input.contentContext,
+            preferredModel: input.preferredModel ?? 'kimi',
         });
 
         const revisedHtml = postProcessHTML(revised.html || currentHtml);
