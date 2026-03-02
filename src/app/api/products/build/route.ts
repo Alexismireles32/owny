@@ -3,7 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { hybridSearch } from '@/lib/indexing/search';
+import { hybridSearch, type SearchResult } from '@/lib/indexing/search';
 import { rerankCandidates } from '@/lib/ai/reranker';
 import { postProcessHTML } from '@/lib/ai/post-process-html';
 import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
@@ -20,6 +20,7 @@ import {
     type TopicDiscoveryTranscriptRow,
 } from '@/lib/ai/topic-discovery';
 import { loadRankedTopicSuggestionsFromGraph } from '@/lib/ai/topic-graph';
+import { runIterativeRetrieval } from '@/lib/ai/iterative-retrieval';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 
@@ -371,6 +372,41 @@ async function loadFullTranscriptLibrary(
     return rows;
 }
 
+async function loadSeedSearchResults(
+    db: ReturnType<typeof getServiceDb>,
+    creatorId: string,
+    videoIds: string[]
+): Promise<SearchResult[]> {
+    const uniqueVideoIds = Array.from(new Set(videoIds)).filter(Boolean);
+    if (uniqueVideoIds.length === 0) return [];
+
+    const [{ data: videos }, { data: clipCards }] = await Promise.all([
+        db
+            .from('videos')
+            .select('id, title')
+            .eq('creator_id', creatorId)
+            .in('id', uniqueVideoIds),
+        db
+            .from('clip_cards')
+            .select('video_id, card_json')
+            .eq('creator_id', creatorId)
+            .in('video_id', uniqueVideoIds),
+    ]);
+
+    const titleById = new Map(((videos || []) as Array<{ id: string; title: string | null }>).map((row) => [row.id, row.title]));
+    const cardById = new Map(((clipCards || []) as ClipCardRow[]).map((row) => [row.video_id, row.card_json]));
+
+    return uniqueVideoIds
+        .filter((videoId) => titleById.has(videoId) || cardById.has(videoId))
+        .map((videoId, index) => ({
+            videoId,
+            title: titleById.get(videoId) || null,
+            clipCard: cardById.get(videoId) || null,
+            score: 2 - index * 0.01,
+            source: 'seed' as const,
+        }));
+}
+
 function scoreTextMatch(text: string, tokens: string[]): number {
     if (!text || tokens.length === 0) return 0;
     const lower = text.toLowerCase();
@@ -536,7 +572,15 @@ export async function POST(request: Request) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
     }
 
-    let body: { creatorId: string; message: string; productType?: ProductType; confirmedTopic?: string };
+    let body: {
+        creatorId: string;
+        message: string;
+        productType?: ProductType;
+        confirmedTopic?: string;
+        confirmedTopicProblem?: string;
+        confirmedTopicPromise?: string;
+        confirmedTopicSupportingVideoIds?: string[];
+    };
     try {
         body = await request.json();
     } catch {
@@ -735,26 +779,46 @@ export async function POST(request: Request) {
 
                 // Use confirmed topic or the original message as the search query
                 const topicQuery = body.confirmedTopic || message;
+                const topicSignal = {
+                    topic: topicQuery,
+                    problem: body.confirmedTopicProblem,
+                    promise: body.confirmedTopicPromise,
+                    supportingVideoIds: Array.isArray(body.confirmedTopicSupportingVideoIds)
+                        ? body.confirmedTopicSupportingVideoIds.filter((videoId) => typeof videoId === 'string' && videoId.length > 0)
+                        : [],
+                };
 
                 // ── Phase 2: Retrieve + Rerank ──
                 send({ type: 'status', message: '🎯 Finding your best content on this topic...', phase: 'retrieving' });
 
-                // Re-search with specific topic if confirmed
-                const topicResults = body.confirmedTopic
+                const seedResults = topicSignal.supportingVideoIds.length > 0
+                    ? await loadSeedSearchResults(db, creator.id, topicSignal.supportingVideoIds)
+                    : [];
+
+                const initialCandidates = body.confirmedTopic
                     ? await hybridSearch(db, creator.id, topicQuery, { limit: 100 })
                     : searchResults;
 
-                send({ type: 'status', message: `📊 Found ${topicResults.length} related videos. Selecting the best ones...`, phase: 'reranking' });
+                send({
+                    type: 'status',
+                    message: `📊 Found ${initialCandidates.length} related videos. Selecting the best ones...`,
+                    phase: 'reranking',
+                });
 
-                const reranked = await rerankCandidates(
-                    topicResults.map((r) => ({
-                        videoId: r.videoId,
-                        title: r.title,
-                        clipCard: r.clipCard,
-                    })),
-                    topicQuery,
+                const retrievalResult = await runIterativeRetrieval({
+                    initialQuery: topicQuery,
                     productType,
-                );
+                    topicSignal,
+                    initialCandidates,
+                    seedCandidates: seedResults,
+                    searchLimit: 100,
+                    maxCycles: 3,
+                    targetSelectedVideos: 8,
+                    search: (query, options) => hybridSearch(db, creator.id, query, { limit: options?.limit ?? 100 }),
+                    rerank: rerankCandidates,
+                });
+
+                const reranked = retrievalResult.reranked;
 
                 const selectedVideoIds = reranked.selectedVideos.map((v) => v.videoId);
 
@@ -765,6 +829,14 @@ export async function POST(request: Request) {
                     });
                     closeStream();
                     return;
+                }
+
+                if (retrievalResult.iterations.length > 1) {
+                    send({
+                        type: 'status',
+                        message: `🧠 Refined the search ${retrievalResult.iterations.length - 1} extra time${retrievalResult.iterations.length > 2 ? 's' : ''} to cover the topic more completely.`,
+                        phase: 'retrieving',
+                    });
                 }
 
                 send({
@@ -1108,6 +1180,9 @@ export async function POST(request: Request) {
                             brandTokens,
                             rerankerConfidence: reranked.confidence,
                             coverageGaps: reranked.coverageGaps,
+                            retrievalIterations: retrievalResult.iterations,
+                            retrievalQueries: retrievalResult.executedQueries,
+                            topicGraphBoostedVideoIds: retrievalResult.boostedVideoIds,
                             sourceEvidenceWordCount,
                             generatedWordCount: countHtmlWords(fullHtml),
                             htmlBuildMode,

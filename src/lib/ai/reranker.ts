@@ -4,13 +4,13 @@
 import { z } from 'zod';
 import { requestKimiStructuredObject } from '@/lib/ai/kimi-structured';
 
-interface ClipCardInput {
+export interface ClipCardInput {
     videoId: string;
     title: string | null;
     clipCard: Record<string, unknown> | null;
 }
 
-interface RerankResult {
+export interface RerankResult {
     selectedVideos: {
         videoId: string;
         reason: string;
@@ -146,7 +146,8 @@ function buildDeterministicFallback(
 export async function rerankCandidates(
     candidates: ClipCardInput[],
     productRequest: string,
-    productType: string
+    productType: string,
+    options?: { preferredVideoIds?: string[] }
 ): Promise<RerankResult> {
     if (candidates.length === 0) {
         return {
@@ -174,8 +175,12 @@ export async function rerankCandidates(
         };
     });
 
+    const preferredVideoIds = Array.from(new Set(options?.preferredVideoIds || [])).slice(0, 12);
+
     const userMessage = `Product Type: ${productType}
 Product Request: ${productRequest}
+${preferredVideoIds.length > 0 ? `Preferred Supporting Videos (creator topic graph): ${preferredVideoIds.join(', ')}
+Use these when they are relevant because they are already known to support this topic.\n` : ''}
 
 Available Videos (${compressedCards.length} candidates):
 ${JSON.stringify(compressedCards, null, 1)}`;

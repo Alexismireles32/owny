@@ -19,7 +19,7 @@ interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
-    topicSuggestions?: { topic: string; videoCount: number; problem?: string; promise?: string }[];
+    topicSuggestions?: { topic: string; videoCount: number; problem?: string; promise?: string; supportingVideoIds?: string[] }[];
     productType?: string;
 }
 
@@ -95,9 +95,9 @@ function normalizeTextToken(value: string): string {
 }
 
 function filterTopicSuggestions(
-    rawTopics: { topic: string; videoCount: number; problem?: string; promise?: string }[],
+    rawTopics: { topic: string; videoCount: number; problem?: string; promise?: string; supportingVideoIds?: string[] }[],
     displayName: string
-): { topic: string; videoCount: number; problem?: string; promise?: string }[] {
+): { topic: string; videoCount: number; problem?: string; promise?: string; supportingVideoIds?: string[] }[] {
     const displayNameTokens = normalizeTextToken(displayName)
         .split(/\s+/)
         .filter((token) => token.length >= 3);
@@ -365,7 +365,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                     ? event.message
                                     : 'Choose one topic to focus your product.';
                                 const rawTopics = Array.isArray(event.topics)
-                                    ? (event.topics as { topic: string; videoCount: number; problem?: string; promise?: string }[])
+                                    ? (event.topics as { topic: string; videoCount: number; problem?: string; promise?: string; supportingVideoIds?: string[] }[])
                                     : [];
                                 const topicSuggestions = filterTopicSuggestions(rawTopics, displayName);
                                 addMessage({
@@ -506,13 +506,16 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     );
 
     const handleTopicSelect = useCallback(
-        (topic: string) => {
-            addMessage({ role: 'user', content: topic });
+        (topic: { topic: string; videoCount: number; problem?: string; promise?: string; supportingVideoIds?: string[] }) => {
+            addMessage({ role: 'user', content: topic.topic });
             handleStream('/api/products/build', {
                 creatorId,
-                message: topic,
+                message: topic.topic,
                 productType: pendingProductType || 'pdf_guide',
-                confirmedTopic: topic,
+                confirmedTopic: topic.topic,
+                confirmedTopicProblem: topic.problem,
+                confirmedTopicPromise: topic.promise,
+                confirmedTopicSupportingVideoIds: topic.supportingVideoIds || [],
             });
         },
         [creatorId, pendingProductType, addMessage, handleStream]
@@ -768,7 +771,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                                             type="button"
                                                             variant="outline"
                                                             className="h-auto items-start justify-between rounded-2xl border-slate-300 bg-white px-3 py-3 text-left text-slate-700"
-                                                            onClick={() => handleTopicSelect(topic.topic)}
+                                                            onClick={() => handleTopicSelect(topic)}
                                                             disabled={buildState.isBuilding}
                                                         >
                                                             <div className="min-w-0 pr-3">

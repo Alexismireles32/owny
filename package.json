@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:ai-evals": "vitest run src/__tests__/ai-evals.test.ts",
     "tokens:build": "style-dictionary build --config tokens/style-dictionary.config.mjs",
     "storybook": "storybook dev -p 6006 --host 127.0.0.1",
     "build-storybook": "storybook build",

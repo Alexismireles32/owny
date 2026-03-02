@@ -4,12 +4,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { generateQueryEmbedding } from './embeddings';
 
-interface SearchResult {
+export interface SearchResult {
     videoId: string;
     title: string | null;
     clipCard: Record<string, unknown> | null;
     score: number;
-    source: 'vector' | 'fts' | 'both';
+    source: 'vector' | 'fts' | 'both' | 'seed';
 }
 
 interface TranscriptFallbackRow {
