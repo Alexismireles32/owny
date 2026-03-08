@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { ProductType } from '@/types/build-packet';
-import { DEFAULT_KIMI_MODEL, type MoonshotChatCompletionRequest } from '@/lib/ai/kimi';
+import {
+    DEFAULT_KIMI_MODEL,
+    getKimiClient,
+    requestKimiChatCompletion,
+} from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
 
 interface HtmlContractResult {
@@ -202,10 +206,7 @@ Rules:
 export async function buildHtmlWithKimiAgenticCodeBuilder(
     input: KimiAgenticBuilderInput
 ): Promise<KimiAgenticBuilderResult> {
-    const client = new OpenAI({
-        apiKey: process.env.KIMI_API_KEY || '',
-        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-    });
+    const client = getKimiClient();
 
     const baseMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         { role: 'system', content: input.systemPrompt },
@@ -231,16 +232,15 @@ Before you finalize, self-check that the result:
     let messages = [...baseMessages];
 
     for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-        const response = await client.chat.completions.create(
-            {
-                model: DEFAULT_KIMI_MODEL,
-                messages,
-                thinking: { type: 'disabled' },
-                temperature: 0.6,
-                top_p: 0.95,
-                max_tokens: 12000,
-            } as MoonshotChatCompletionRequest
-        );
+        const response = await requestKimiChatCompletion({
+            client,
+            model: DEFAULT_KIMI_MODEL,
+            messages,
+            thinking: 'disabled',
+            preset: iteration === 0 ? 'creative_html' : 'surgical_edit',
+            maxTokens: 12000,
+            operation: `agentic_html.iteration_${iteration + 1}`,
+        });
 
         const choice = response.choices[0];
         modelTrail.push(DEFAULT_KIMI_MODEL);

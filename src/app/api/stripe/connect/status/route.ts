@@ -4,6 +4,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe';
 import { NextResponse } from 'next/server';
+import { getStripeConnectSetupMessage, hasUsableStripeSecretKey } from '@/lib/stripe-mode';
 
 export async function GET() {
     const supabase = await createClient();
@@ -33,6 +34,10 @@ export async function GET() {
             chargesEnabled: false,
             payoutsEnabled: false,
         });
+    }
+
+    if (!hasUsableStripeSecretKey()) {
+        return NextResponse.json({ error: getStripeConnectSetupMessage() }, { status: 503 });
     }
 
     // Check actual status from Stripe

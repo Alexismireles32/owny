@@ -23,6 +23,7 @@ export default function SignInPage() {
 function SignInForm() {
     const searchParams = useSearchParams();
     const handleFromQuery = (searchParams.get('handle') || '').replace(/^@/, '').trim().toLowerCase();
+    const nextFromQuery = sanitizeNextPath(searchParams.get('next'));
     const [activeTab, setActiveTab] = useState<'password' | 'magic'>('password');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -120,7 +121,7 @@ function SignInForm() {
             return;
         }
 
-        router.push('/dashboard');
+        router.push(nextFromQuery);
         router.refresh();
     }
 
@@ -133,7 +134,7 @@ function SignInForm() {
 
         const nextPath = handleFromQuery
             ? `/onboard?handle=${encodeURIComponent(handleFromQuery)}`
-            : '/dashboard';
+            : nextFromQuery;
 
         const { error } = await supabase.auth.signInWithOtp({
             email,
@@ -268,7 +269,7 @@ function SignInForm() {
                     <div className="text-center text-sm text-muted-foreground">
                         Don&apos;t have an account?{' '}
                         <Link
-                            href={handleFromQuery ? `/sign-up?handle=${encodeURIComponent(handleFromQuery)}` : '/sign-up'}
+                            href={buildAuthLink('/sign-up', { handle: handleFromQuery, next: nextFromQuery })}
                             className="text-primary hover:underline font-medium"
                         >
                             Sign Up
@@ -278,4 +279,17 @@ function SignInForm() {
             </Card>
         </div>
     );
+}
+
+function sanitizeNextPath(next: string | null): string {
+    if (!next || !next.startsWith('/')) return '/dashboard';
+    return next;
+}
+
+function buildAuthLink(basePath: '/sign-up' | '/sign-in', params: { handle?: string; next?: string }): string {
+    const search = new URLSearchParams();
+    if (params.handle) search.set('handle', params.handle);
+    if (params.next && params.next !== '/dashboard') search.set('next', params.next);
+    const query = search.toString();
+    return query ? `${basePath}?${query}` : basePath;
 }

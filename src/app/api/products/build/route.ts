@@ -13,8 +13,15 @@ import {
     getEvergreenDesignCanon,
 } from '@/lib/ai/design-canon';
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
-import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
+import { runEvergreenCriticLoop, runGuidedCriticRepairPass } from '@/lib/ai/critic-loop';
 import { runKimiSectionedProductPipeline } from '@/lib/ai/kimi-product-pipeline';
+import { buildBrowserQaFeedbackForPrompt, runProductBrowserQa } from '@/lib/ai/browser-qa';
+import {
+    buildMarketAwareProductDescription,
+    buildMarketOfferContext,
+    chooseInitialProductPrice,
+    generateMarketOfferBrief,
+} from '@/lib/ai/market-offer-intel';
 import {
     synthesizeTranscriptDrivenTopics,
     type TopicDiscoveryTranscriptRow,
@@ -466,6 +473,10 @@ const MAX_TRANSCRIPT_CONTEXT_CHARS = 2200;
 const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 1800;
 const KIMI_PIPELINE_TIMEOUT_MS = 240_000;
 const CRITIC_LOOP_TIMEOUT_MS = 70_000;
+const BROWSER_QA_TIMEOUT_MS = 25_000;
+const MARKET_OFFER_TIMEOUT_MS = 20_000;
+const MARKET_OFFER_PIPELINE_BLOCKING_TIMEOUT_MS = 5_000;
+const MARKET_OFFER_FINALIZATION_TIMEOUT_MS = 1_500;
 
 function buildContentContext(
     contexts: Array<{
@@ -505,6 +516,21 @@ async function withTimeout<T>(
                 timeoutHandle = setTimeout(() => {
                     reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
                 }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+}
+
+async function withSoftTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | null> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    try {
+        return await Promise.race<T | null>([
+            work,
+            new Promise<null>((resolve) => {
+                timeoutHandle = setTimeout(() => resolve(null), timeoutMs);
             }),
         ]);
     } finally {
@@ -999,6 +1025,54 @@ export async function POST(request: Request) {
                     priorProductCount: catalogHtml.length,
                 });
                 const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
+                let marketOfferBrief = null;
+                let marketOfferContext: string | null = null;
+                let marketOfferBlockingMs: number | null = null;
+                let marketOfferFinalizationMs: number | null = null;
+
+                send({
+                    type: 'status',
+                    message: '📈 Launching current pricing and offer research in the background...',
+                    phase: 'planning',
+                });
+                ensureActiveRequest();
+
+                const marketOfferPromise = (async () => {
+                    try {
+                        return await withTimeout(
+                            generateMarketOfferBrief({
+                                topicQuery,
+                                productType,
+                                creatorDna,
+                            }),
+                            MARKET_OFFER_TIMEOUT_MS,
+                            'Kimi market offer intelligence'
+                        );
+                    } catch (marketError) {
+                        log.warn('Market offer intelligence failed; continuing with creator-grounded build only', {
+                            creatorId: creator.id,
+                            topicQuery,
+                            error: marketError instanceof Error ? marketError.message : 'Unknown market research error',
+                        });
+                        return null;
+                    }
+                })();
+
+                const marketOfferBlockingStart = Date.now();
+                marketOfferBrief = await withSoftTimeout(
+                    marketOfferPromise,
+                    MARKET_OFFER_PIPELINE_BLOCKING_TIMEOUT_MS
+                );
+                marketOfferBlockingMs = Date.now() - marketOfferBlockingStart;
+                if (marketOfferBrief) {
+                    marketOfferContext = buildMarketOfferContext(marketOfferBrief);
+                } else {
+                    send({
+                        type: 'status',
+                        message: '⏩ Proceeding with creator-grounded generation while offer research finishes in the background...',
+                        phase: 'planning',
+                    });
+                }
 
                 send({
                     type: 'status',
@@ -1017,6 +1091,8 @@ export async function POST(request: Request) {
                         creatorDna,
                         creatorDnaContext,
                         designCanonContext,
+                        marketOfferContext,
+                        marketOfferBrief,
                         creativeDirection,
                         selectedContexts,
                     }),
@@ -1029,6 +1105,19 @@ export async function POST(request: Request) {
                     : groundedVideoIds;
                 let fullHtml = postProcessHTML(pipelineResult.html);
                 const htmlBuildMode = 'kimi-sectioned';
+
+                if (!marketOfferBrief) {
+                    const marketOfferFinalizationStart = Date.now();
+                    const finalizedMarketOfferBrief = await withSoftTimeout(
+                        marketOfferPromise,
+                        MARKET_OFFER_FINALIZATION_TIMEOUT_MS
+                    );
+                    marketOfferFinalizationMs = Date.now() - marketOfferFinalizationStart;
+                    if (finalizedMarketOfferBrief) {
+                        marketOfferBrief = finalizedMarketOfferBrief;
+                        marketOfferContext = buildMarketOfferContext(finalizedMarketOfferBrief);
+                    }
+                }
 
                 send({
                     type: 'status',
@@ -1052,6 +1141,16 @@ export async function POST(request: Request) {
                 const stageTimingsMs = {
                     ...pipelineResult.stageTimingsMs,
                 } as Record<string, number>;
+                if (marketOfferBlockingMs !== null) {
+                    stageTimingsMs.marketOfferBlocking = marketOfferBlockingMs;
+                }
+                if (marketOfferFinalizationMs !== null) {
+                    stageTimingsMs.marketOfferFinalization = marketOfferFinalizationMs;
+                }
+                let browserQaReport: Awaited<ReturnType<typeof runProductBrowserQa>> | null = null;
+                let initialBrowserQaReport: Awaited<ReturnType<typeof runProductBrowserQa>> | null = null;
+                let browserQaRepairAttempted = false;
+                let browserQaRepairModel: string | null = null;
 
                 if (!qualityEvaluation.overallPassed) {
                     send({
@@ -1102,9 +1201,111 @@ export async function POST(request: Request) {
                     }
                 }
 
+                const initialPriceCents = chooseInitialProductPrice(productType, marketOfferBrief);
+                const productDescription = buildMarketAwareProductDescription({
+                    topicQuery,
+                    productType,
+                    marketOfferBrief,
+                });
+
                 send({
                     type: 'status',
-                    message: `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'})`,
+                    message: '🔎 Running browser QA on desktop and mobile...',
+                    phase: 'building',
+                });
+                ensureActiveRequest();
+
+                const browserQaStart = Date.now();
+                browserQaReport = await withTimeout(
+                    runProductBrowserQa({
+                        html: fullHtml,
+                        productType,
+                    }),
+                    BROWSER_QA_TIMEOUT_MS,
+                    'Browser QA'
+                );
+                stageTimingsMs.browserQa = Date.now() - browserQaStart;
+                initialBrowserQaReport = browserQaReport;
+
+                if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+                    send({
+                        type: 'status',
+                        message: `⚠️ Browser QA flagged issues${browserQaReport.score !== null ? ` at ${browserQaReport.score}/100` : ''}. Attempting a targeted Kimi repair pass...`,
+                        phase: 'building',
+                    });
+                    ensureActiveRequest();
+
+                    const browserQaRepairStart = Date.now();
+                    browserQaRepairAttempted = true;
+
+                    try {
+                        const repairFeedback = buildBrowserQaFeedbackForPrompt(browserQaReport);
+                        const repairResult = await withTimeout(
+                            runGuidedCriticRepairPass({
+                                html: fullHtml,
+                                feedback: repairFeedback,
+                                productType,
+                                creatorHandle: creator.handle,
+                                creatorDisplayName: creator.display_name || creator.handle,
+                                topicQuery,
+                                originalRequest: message,
+                                creatorDnaContext,
+                                designCanonContext,
+                                directionId: creativeDirection.id,
+                                contentContext,
+                                preferredModel: 'kimi',
+                            }),
+                            CRITIC_LOOP_TIMEOUT_MS,
+                            'Browser QA repair'
+                        );
+                        stageTimingsMs.browserQaRepair = Date.now() - browserQaRepairStart;
+                        browserQaRepairModel = repairResult.model;
+                        criticIterations += 1;
+                        criticModels = [...criticModels, repairResult.model];
+                        fullHtml = repairResult.html;
+                        qualityEvaluation = evaluateProductQuality({
+                            html: fullHtml,
+                            productType,
+                            sourceVideoIds: sourceVideoIdsForBuild,
+                            catalogHtml,
+                            brandTokens,
+                            creatorHandle: creator.handle,
+                            qualityWeights: designCanon.qualityWeights,
+                        });
+                        send({ type: 'html_chunk', html: fullHtml });
+                        send({
+                            type: 'status',
+                            message: '🔁 Re-running browser QA after the targeted repair...',
+                            phase: 'building',
+                        });
+                        ensureActiveRequest();
+
+                        const browserQaRetryStart = Date.now();
+                        browserQaReport = await withTimeout(
+                            runProductBrowserQa({
+                                html: fullHtml,
+                                productType,
+                            }),
+                            BROWSER_QA_TIMEOUT_MS,
+                            'Browser QA retry'
+                        );
+                        stageTimingsMs.browserQaRetry = Date.now() - browserQaRetryStart;
+                    } catch (browserQaRepairError) {
+                        stageTimingsMs.browserQaRepair = stageTimingsMs.browserQaRepair || CRITIC_LOOP_TIMEOUT_MS;
+                        log.warn('Browser QA repair pass failed; keeping best available HTML', {
+                            creatorId: creator.id,
+                            productType,
+                            topicQuery,
+                            error: browserQaRepairError instanceof Error ? browserQaRepairError.message : 'Unknown browser QA repair error',
+                        });
+                    }
+                }
+
+                send({
+                    type: 'status',
+                    message: browserQaReport.skipped
+                        ? `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'}). Browser QA skipped in this runtime.`
+                        : `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'}). Browser QA ${browserQaRepairAttempted ? (browserQaReport.passed ? 'passed after targeted repair' : 'still flagged issues') : (browserQaReport.passed ? 'passed' : 'flagged issues')}${browserQaReport.score !== null ? ` at ${browserQaReport.score}/100` : ''}.`,
                     phase: 'building',
                 });
                 send({ type: 'html_complete', html: fullHtml });
@@ -1129,6 +1330,28 @@ export async function POST(request: Request) {
                     return;
                 }
 
+                if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+                    send({
+                        type: 'error',
+                        message: 'Build failed browser QA on desktop or mobile. The preview was generated, but nothing was saved.',
+                        manualEditRequired: true,
+                        qualityScore: qualityEvaluation.overallScore,
+                        browserQaScore: browserQaReport.score,
+                        browserQaIssues: browserQaReport.issues,
+                        browserQaViewports: browserQaReport.viewports,
+                        candidateHtml: fullHtml,
+                    });
+                    log.warn('Rejected product build that failed browser QA', {
+                        creatorId: creator.id,
+                        productType,
+                        topicQuery,
+                        browserQaScore: browserQaReport.score,
+                        browserQaIssues: browserQaReport.issues,
+                    });
+                    closeStream();
+                    return;
+                }
+
                 // Save version
                 send({ type: 'status', message: '💾 Saving your product...', phase: 'saving' });
                 ensureActiveRequest();
@@ -1140,10 +1363,10 @@ export async function POST(request: Request) {
                         slug,
                         type: productType,
                         title: productTitle,
-                        description: `Created from: "${message}"`,
+                        description: productDescription,
                         status: 'draft',
                         access_type: 'paid',
-                        price_cents: 999,
+                        price_cents: initialPriceCents,
                         currency: 'usd',
                     })
                     .select('id')
@@ -1196,6 +1419,32 @@ export async function POST(request: Request) {
                             creatorDisplayName: creator.display_name,
                             creativeDirectionId: creativeDirection.id,
                             creativeDirectionName: creativeDirection.name,
+                            marketOfferResearchQuery: marketOfferBrief?.searchQuery || null,
+                            marketCategory: marketOfferBrief?.marketCategory || null,
+                            marketBuyerUrgency: marketOfferBrief?.buyerUrgency || null,
+                            marketMonetizationConfidence: marketOfferBrief?.monetizationConfidence ?? null,
+                            marketRecommendedPriceCents: marketOfferBrief?.recommendedPriceCents ?? initialPriceCents,
+                            marketPriceRationale: marketOfferBrief?.priceRationale || null,
+                            marketOfferAngle: marketOfferBrief?.offerAngle || null,
+                            marketPromiseStyle: marketOfferBrief?.promiseStyle || null,
+                            marketDifferentiationHooks: marketOfferBrief?.differentiationHooks || [],
+                            marketObjectionHandling: marketOfferBrief?.objectionHandling || [],
+                            marketPackagingNotes: marketOfferBrief?.packagingNotes || [],
+                            marketCtaIdeas: marketOfferBrief?.ctaIdeas || [],
+                            marketSeoKeywords: marketOfferBrief?.seoKeywords || [],
+                            marketResearchCitations: marketOfferBrief?.citations || [],
+                            browserQaInitialScore: initialBrowserQaReport?.score ?? browserQaReport?.score ?? null,
+                            browserQaInitialPassed: initialBrowserQaReport?.passed ?? browserQaReport?.passed ?? null,
+                            browserQaInitialSkipped: initialBrowserQaReport?.skipped ?? browserQaReport?.skipped ?? false,
+                            browserQaInitialIssues: initialBrowserQaReport?.issues || [],
+                            browserQaInitialViewports: initialBrowserQaReport?.viewports || [],
+                            browserQaRepairAttempted,
+                            browserQaRepairModel,
+                            browserQaScore: browserQaReport?.score ?? null,
+                            browserQaPassed: browserQaReport?.passed ?? null,
+                            browserQaSkipped: browserQaReport?.skipped ?? false,
+                            browserQaIssues: browserQaReport?.issues || [],
+                            browserQaViewports: browserQaReport?.viewports || [],
                             qualityOverallScore: qualityEvaluation.overallScore,
                             qualityOverallPassed: qualityEvaluation.overallPassed,
                             qualityFailingGates: qualityEvaluation.failingGates,

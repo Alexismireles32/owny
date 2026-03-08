@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { improveProductWithKimiStages } from '@/lib/ai/kimi-product-improve';
 import { buildCreatorDNA } from '@/lib/ai/creator-dna';
+import { buildDesignCanonContext, chooseCreativeDirection, getEvergreenDesignCanon } from '@/lib/ai/design-canon';
 import {
     chooseStricterImproveBaseline,
     getImproveSaveRejection,
@@ -14,6 +15,7 @@ import {
     toImproveQualitySnapshot,
 } from '@/lib/ai/improve-save-policy';
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
+import { loadSourceEvidenceBundle } from '@/lib/ai/source-evidence';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import { loadCreatorCatalogHtml } from '@/lib/products/catalog-html';
@@ -140,16 +142,31 @@ export async function POST(request: Request) {
             qualityWeights = qualityWeights || parseQualityWeights(activeVersion?.build_packet || null);
         }
 
+        const designCanon = getEvergreenDesignCanon();
+        const inferredProductType = inferProductType(html, buildPacket?.productType);
+        const creativeDirection = chooseCreativeDirection({
+            productType: inferredProductType,
+            creatorId: creator.id,
+            topicQuery: `${instruction} ${typeof buildPacket?.title === 'string' ? buildPacket.title : ''}`.trim(),
+            creatorMood: creatorDna.visual.mood,
+            priorProductCount: catalogHtml.length,
+        });
+        const designCanonContext = buildDesignCanonContext(designCanon, creativeDirection);
+        const sourceEvidenceBundle = await loadSourceEvidenceBundle(supabase, sourceVideoIds);
+
         const result = await improveProductWithKimiStages({
             currentHtml: html,
             instruction,
-            productType: inferProductType(html, buildPacket?.productType),
+            productType: inferredProductType,
             creatorDisplayName,
             creatorHandle,
             creatorDna,
+            designCanonContext,
+            globalEvidenceContext: sourceEvidenceBundle.combinedContext,
+            sourceEvidenceByVideoId: sourceEvidenceBundle.byVideoId,
         });
 
-        const productType = inferProductType(html, buildPacket?.productType);
+        const productType = inferredProductType;
         const currentQuality = evaluateProductQuality({
             html,
             productType,

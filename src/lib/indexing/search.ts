@@ -19,6 +19,12 @@ interface TranscriptFallbackRow {
     transcript_text: string;
 }
 
+interface VideoBoostMetadataRow {
+    id: string;
+    views: number | null;
+    created_at_source?: string | null;
+}
+
 const FALLBACK_TOPIC_STOPWORDS = new Set([
     'about', 'after', 'also', 'and', 'are', 'because', 'been', 'being', 'build', 'check', 'content',
     'create', 'from', 'guide', 'have', 'into', 'just', 'lesson', 'like', 'make', 'more', 'only',
@@ -166,6 +172,42 @@ async function fallbackTranscriptSearch(
     return scored.slice(0, limit);
 }
 
+async function loadVideoBoostMetadata(
+    supabase: SupabaseClient,
+    videoIds: string[]
+): Promise<VideoBoostMetadataRow[]> {
+    const primaryQuery = await supabase
+        .from('videos')
+        .select('id, views, created_at_source')
+        .in('id', videoIds);
+
+    if (!primaryQuery.error) {
+        return (primaryQuery.data || []) as VideoBoostMetadataRow[];
+    }
+
+    if (!/created_at_source/i.test(primaryQuery.error.message || '')) {
+        console.warn('Video metadata lookup failed:', primaryQuery.error.message);
+        return [];
+    }
+
+    console.warn('videos.created_at_source is unavailable; continuing without recency boost');
+
+    const fallbackQuery = await supabase
+        .from('videos')
+        .select('id, views')
+        .in('id', videoIds);
+
+    if (fallbackQuery.error) {
+        console.warn('Fallback video metadata lookup failed:', fallbackQuery.error.message);
+        return [];
+    }
+
+    return ((fallbackQuery.data || []) as Array<{ id: string; views: number | null }>).map((row) => ({
+        ...row,
+        created_at_source: null,
+    }));
+}
+
 /**
  * Hybrid search: combines pgvector cosine similarity + Postgres full-text search.
  * Returns deduplicated, boosted results.
@@ -271,12 +313,9 @@ export async function hybridSearch(
     // Fetch video metadata for boosting
     const videoIds = results.map((r) => r.videoId);
     if (videoIds.length > 0) {
-        const { data: videos } = await supabase
-            .from('videos')
-            .select('id, views, created_at_source')
-            .in('id', videoIds);
+        const videos = await loadVideoBoostMetadata(supabase, videoIds);
 
-        if (videos) {
+        if (videos.length > 0) {
             const avgViews = videos.reduce((sum, v) => sum + (v.views || 0), 0) / videos.length || 1;
 
             for (const result of results) {

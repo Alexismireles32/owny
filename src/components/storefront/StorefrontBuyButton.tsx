@@ -1,5 +1,6 @@
 'use client';
 
+import { ArrowRight } from 'lucide-react';
 import { CheckoutCtaButton } from '@/components/checkout/checkout-cta-button';
 
 interface StorefrontBuyButtonProps {
@@ -35,10 +36,13 @@ export function StorefrontBuyButton({
                 productSlug={productSlug}
                 isFree={isFree}
                 size="sm"
-                className={`text-white text-xs ${fullWidth ? 'w-full' : 'px-4'}`}
+                className={`text-white text-xs shadow-[0_18px_36px_-24px_rgba(15,23,42,0.4)] ${fullWidth ? 'w-full rounded-xl py-5' : 'rounded-full px-4'}`}
                 style={{ backgroundColor: primaryColor }}
             >
-                {isFree ? 'Get Free Access' : 'Buy Now'}
+                <span className="inline-flex items-center gap-1.5">
+                    {isFree ? 'Get Free Access' : 'Buy Now'}
+                    <ArrowRight className="size-3.5" />
+                </span>
             </CheckoutCtaButton>
         </div>
     );

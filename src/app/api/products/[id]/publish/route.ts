@@ -4,6 +4,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { triggerProductPublishedEmail } from '@/lib/email/triggers';
+import { runProductBrowserQa } from '@/lib/ai/browser-qa';
+import { evaluateCommerceJourneyQa } from '@/lib/commerce/commerce-journey-qa';
 import { getEvergreenDesignCanon } from '@/lib/ai/design-canon';
 import { parseQualityWeights } from '@/lib/ai/improve-save-policy';
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
@@ -46,7 +48,7 @@ export async function POST(
 
     const { data: creator } = await supabase
         .from('creators')
-        .select('id, handle, display_name, brand_tokens, profiles(email)')
+        .select('id, handle, display_name, brand_tokens, stripe_connect_account_id, stripe_connect_status, profiles(email)')
         .eq('profile_id', user.id)
         .single();
 
@@ -56,7 +58,7 @@ export async function POST(
 
     const { data: product } = await supabase
         .from('products')
-        .select('id, title, slug, creator_id, active_version_id, type')
+        .select('id, title, slug, creator_id, active_version_id, type, access_type, price_cents, currency')
         .eq('id', id)
         .single();
 
@@ -99,6 +101,24 @@ export async function POST(
         creatorHandle: creator.handle,
         qualityWeights,
     });
+    const browserQaReport = await runProductBrowserQa({
+        html: generatedHtml,
+        productType,
+    });
+    const commerceQaReport = evaluateCommerceJourneyQa({
+        title: product.title,
+        slug: product.slug,
+        accessType: product.access_type,
+        priceCents: product.price_cents,
+        currency: product.currency,
+        productType,
+        creatorHandle: creator.handle,
+        stripeConnectStatus: (creator as { stripe_connect_status?: string | null }).stripe_connect_status || null,
+        stripeConnectAccountId: (creator as { stripe_connect_account_id?: string | null }).stripe_connect_account_id || null,
+        hasGeneratedHtml: generatedHtml.length > 0,
+        qualityPassed: qualityEvaluation.overallPassed,
+        browserQaPassed: browserQaReport.passed,
+    });
 
     if (!qualityEvaluation.overallPassed) {
         return NextResponse.json({
@@ -106,6 +126,28 @@ export async function POST(
             manualEditRequired: true,
             qualityScore: qualityEvaluation.overallScore,
             failingGates: qualityEvaluation.failingGates,
+        }, { status: 422 });
+    }
+
+    if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+        return NextResponse.json({
+            error: 'The active version failed browser QA on desktop or mobile and cannot be published.',
+            manualEditRequired: true,
+            qualityScore: qualityEvaluation.overallScore,
+            browserQaScore: browserQaReport.score,
+            browserQaIssues: browserQaReport.issues,
+            browserQaViewports: browserQaReport.viewports,
+        }, { status: 422 });
+    }
+
+    if (!commerceQaReport.passed) {
+        return NextResponse.json({
+            error: 'The active version is not ready for checkout and delivery.',
+            manualEditRequired: true,
+            qualityScore: qualityEvaluation.overallScore,
+            commerceQaScore: commerceQaReport.score,
+            commerceQaIssues: commerceQaReport.issues,
+            commerceQaChecks: commerceQaReport.checks,
         }, { status: 422 });
     }
 
@@ -135,6 +177,15 @@ export async function POST(
                 qualityFailingGates: qualityEvaluation.failingGates,
                 qualityGateScores: gateScores,
                 maxCatalogSimilarity: qualityEvaluation.maxCatalogSimilarity,
+                browserQaScore: browserQaReport.score,
+                browserQaPassed: browserQaReport.passed,
+                browserQaSkipped: browserQaReport.skipped,
+                browserQaIssues: browserQaReport.issues,
+                browserQaViewports: browserQaReport.viewports,
+                commerceQaScore: commerceQaReport.score,
+                commerceQaPassed: commerceQaReport.passed,
+                commerceQaIssues: commerceQaReport.issues,
+                commerceQaChecks: commerceQaReport.checks,
             },
         })
         .eq('id', product.active_version_id);
@@ -177,5 +228,6 @@ export async function POST(
         message: 'Product published',
         productId: id,
         qualityScore: qualityEvaluation.overallScore,
+        commerceQaScore: commerceQaReport.score,
     });
 }

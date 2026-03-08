@@ -1,15 +1,15 @@
-import OpenAI from 'openai';
 import type { ProductType } from '@/types/build-packet';
-import { DEFAULT_KIMI_MODEL, type MoonshotChatCompletionRequest } from '@/lib/ai/kimi';
 import { log } from '@/lib/logger';
 import { postProcessHTML } from '@/lib/ai/post-process-html';
 import { ensureChecklistDocumentInteractivity } from '@/lib/ai/checklist-interactivity';
+import { DEFAULT_KIMI_MODEL } from '@/lib/ai/kimi';
 import {
     buildQualityFeedbackForPrompt,
     evaluateProductQuality,
     type ProductQualityEvaluation,
     type QualityGateKey,
 } from '@/lib/ai/quality-gates';
+import { requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
 
 interface CriticLoopInput {
     html: string;
@@ -35,6 +35,21 @@ interface CriticLoopResult {
     evaluation: ProductQualityEvaluation;
     iterationsRun: number;
     modelTrail: string[];
+}
+
+interface GuidedCriticRepairInput {
+    html: string;
+    feedback: string;
+    productType: ProductType;
+    creatorHandle: string;
+    creatorDisplayName: string;
+    topicQuery: string;
+    originalRequest: string;
+    creatorDnaContext: string;
+    designCanonContext: string;
+    directionId: string;
+    contentContext: string;
+    preferredModel?: 'kimi';
 }
 
 async function reviseHtmlWithCritic(input: {
@@ -89,23 +104,14 @@ ${input.currentHtml}
 Return the full improved HTML now.`;
 
     const runKimi = async (): Promise<{ html: string; model: string }> => {
-        const kimi = new OpenAI({
-            apiKey: process.env.KIMI_API_KEY || '',
-            baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
+        const html = await requestKimiTextCompletion({
+            systemPrompt,
+            userPrompt,
+            maxTokens: 16000,
+            preset: 'surgical_edit',
+            operation: 'critic.revise_html',
         });
-        const result = await kimi.chat.completions.create(
-            {
-                model: DEFAULT_KIMI_MODEL,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt },
-                ],
-                thinking: { type: 'disabled' },
-                temperature: 0.6,
-                max_tokens: 16000,
-            } as MoonshotChatCompletionRequest
-        );
-        return { html: result.choices[0]?.message?.content ?? '', model: DEFAULT_KIMI_MODEL };
+        return { html, model: DEFAULT_KIMI_MODEL };
     };
 
     try {
@@ -116,6 +122,35 @@ Return the full improved HTML now.`;
         });
         throw error;
     }
+}
+
+export async function runGuidedCriticRepairPass(
+    input: GuidedCriticRepairInput
+): Promise<{ html: string; model: string }> {
+    const revised = await reviseHtmlWithCritic({
+        currentHtml: input.html,
+        qualityFeedback: input.feedback,
+        creatorDnaContext: input.creatorDnaContext,
+        designCanonContext: input.designCanonContext,
+        directionId: input.directionId,
+        productType: input.productType,
+        topicQuery: input.topicQuery,
+        originalRequest: input.originalRequest,
+        creatorHandle: input.creatorHandle,
+        creatorDisplayName: input.creatorDisplayName,
+        contentContext: input.contentContext,
+        preferredModel: input.preferredModel ?? 'kimi',
+    });
+
+    let repairedHtml = postProcessHTML(revised.html || input.html);
+    if (input.productType === 'checklist_toolkit') {
+        repairedHtml = ensureChecklistDocumentInteractivity(repairedHtml);
+    }
+
+    return {
+        html: repairedHtml,
+        model: revised.model,
+    };
 }
 
 function isEvaluationBetter(

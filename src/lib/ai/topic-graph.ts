@@ -270,6 +270,8 @@ Return a JSON object:
         schema: VideoIntelligenceBatchSchema,
         maxTokens: 3200,
         thinking: 'enabled',
+        preset: 'analysis_json',
+        operation: 'topic_graph.video_intelligence',
     });
 
     const batchIds = new Set(batch.map((row) => row.videoId));
@@ -389,6 +391,8 @@ Return:
         schema: TopicGraphSchema,
         maxTokens: 2600,
         thinking: 'enabled',
+        preset: 'analysis_json',
+        operation: 'topic_graph.creator_graph',
     });
 
     const allowedVideoIds = new Set(input.intelligenceRows.map((row) => String(row.video_id)));

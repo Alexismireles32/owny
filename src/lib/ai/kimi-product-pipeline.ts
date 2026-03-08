@@ -2,8 +2,10 @@ import { z } from 'zod';
 import type { ProductType } from '@/types/build-packet';
 import type { CreatorDNA } from '@/lib/ai/creator-dna';
 import type { CreativeDirection } from '@/lib/ai/design-canon';
+import type { MarketOfferBrief } from '@/lib/ai/market-offer-intel';
 import { requestKimiStructuredObject, requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
 import { ensureChecklistDocumentInteractivity } from '@/lib/ai/checklist-interactivity';
+import { log } from '@/lib/logger';
 
 export interface KimiPipelineContext {
     videoId: string;
@@ -72,6 +74,12 @@ export interface KimiSectionedProductPipelineResult {
     stageTimingsMs: Record<string, number>;
 }
 
+const KIMI_LIBRARIAN_TIMEOUT_MS = 15_000;
+const KIMI_SECTION_TIMEOUT_MS = 90_000;
+const KIMI_LIBRARIAN_SOFT_TIMEOUT_MS = 10_000;
+const KIMI_SECTION_BATCH_SOFT_TIMEOUT_MS = 25_000;
+const KIMI_SECTION_BATCH_ATTEMPT_MAX_SECTIONS = 3;
+
 interface KimiPageShell {
     bodyClasses: string;
     backgroundHtml: string;
@@ -96,6 +104,12 @@ const LibrarianPackSchema = z.object({
         })
     ).default([]),
 });
+
+const LIBRARIAN_TOPIC_STOPWORDS = new Set([
+    'about', 'afternoon', 'build', 'course', 'create', 'creator', 'creators', 'digital', 'focused',
+    'guide', 'how', 'into', 'lesson', 'lessons', 'mini', 'module', 'product', 'products', 'teach',
+    'teaches', 'that', 'their', 'them', 'this', 'tiktok', 'video', 'videos', 'week', 'with', 'your',
+]);
 
 function sectionPrefix(productType: ProductType): string {
     switch (productType) {
@@ -170,6 +184,140 @@ function compactContext(contexts: KimiPipelineContext[], limit = 8, maxChars = 1
         .join('\n\n');
 }
 
+function tokenizeLibrarianTopicQuery(query: string): string[] {
+    return query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3 && !LIBRARIAN_TOPIC_STOPWORDS.has(token));
+}
+
+function titleCaseWords(value: string): string {
+    return value.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function normalizeCompactWhitespace(value: string): string {
+    return value.replace(/\s+/g, ' ').trim();
+}
+
+function scoreContextForLibrarian(context: KimiPipelineContext, queryTokens: string[]): number {
+    const title = context.title.toLowerCase();
+    const topicTags = context.topicTags.join(' ').toLowerCase();
+    const keySteps = context.keySteps.join(' ').toLowerCase();
+    const transcript = context.transcriptContext.slice(0, 1200).toLowerCase();
+
+    let score = Math.log10(Math.max(10, context.views + 10));
+    if (context.keySteps.length > 0) score += 0.8;
+    if (context.topicTags.length > 0) score += 0.5;
+
+    for (const token of queryTokens) {
+        if (title.includes(token)) score += 3.2;
+        if (topicTags.includes(token)) score += 2.2;
+        if (keySteps.includes(token)) score += 1.8;
+        if (transcript.includes(token)) score += 0.6;
+    }
+
+    return score;
+}
+
+function chooseLibrarianSectionTitle(input: {
+    context: KimiPipelineContext;
+    productType: ProductType;
+    index: number;
+}): string {
+    const candidate = input.context.keySteps[0]
+        || input.context.topicTags[0]
+        || input.context.title;
+    if (!candidate) return `${sectionPrefix(input.productType)} ${input.index + 1}`;
+    return titleCaseWords(normalizeCompactWhitespace(candidate));
+}
+
+function chooseLibrarianObjective(input: {
+    context: KimiPipelineContext;
+    productTitle: string;
+}): string {
+    const primaryStep = normalizeCompactWhitespace(input.context.keySteps[0] || '');
+    if (primaryStep) {
+        return `Teach how to ${primaryStep.charAt(0).toLowerCase()}${primaryStep.slice(1)} with creator-specific detail.`;
+    }
+
+    const primaryTopic = normalizeCompactWhitespace(input.context.topicTags[0] || '');
+    if (primaryTopic) {
+        return `Turn ${primaryTopic.toLowerCase()} into a concrete lesson for ${input.productTitle}.`;
+    }
+
+    return `Turn ${input.context.title} into a concrete lesson for ${input.productTitle}.`;
+}
+
+export function buildDeterministicLibrarianPack(input: {
+    productType: ProductType;
+    productTitle: string;
+    topicQuery: string;
+    selectedContexts: KimiPipelineContext[];
+}): LibrarianPack {
+    const queryTokens = tokenizeLibrarianTopicQuery(input.topicQuery);
+    const targetCount = Math.min(
+        input.selectedContexts.length,
+        Math.max(4, sectionCountTarget(input.productType))
+    );
+    const rankedContexts = [...input.selectedContexts]
+        .sort((a, b) => {
+            const scoreDiff = scoreContextForLibrarian(b, queryTokens) - scoreContextForLibrarian(a, queryTokens);
+            if (scoreDiff !== 0) return scoreDiff;
+            return b.views - a.views;
+        })
+        .slice(0, targetCount);
+
+    const evidenceRows = rankedContexts.map((context, index) => ({
+        videoId: context.videoId,
+        title: context.title,
+        whyItMatters: context.keySteps[0]
+            || context.topicTags[0]
+            || `Ground this section in ${context.title}.`,
+        anchorQuote: firstTranscriptSentence(context.transcriptContext),
+        extractionFocus: (context.keySteps.length > 0 ? context.keySteps : context.topicTags).slice(0, 4),
+        sectionTitle: chooseLibrarianSectionTitle({
+            context,
+            productType: input.productType,
+            index,
+        }),
+        sectionObjective: chooseLibrarianObjective({
+            context,
+            productTitle: input.productTitle,
+        }),
+    }));
+
+    const focusTerms = Array.from(new Set(
+        rankedContexts.flatMap((context) => [...context.topicTags, ...context.keySteps])
+    )).slice(0, 3);
+
+    return {
+        productAngle: focusTerms.length > 0
+            ? `${input.productTitle} built around ${focusTerms.map((term) => normalizeCompactWhitespace(term).toLowerCase()).join(', ')}.`
+            : `${input.productTitle} built from the creator's strongest transcript evidence about ${input.topicQuery}.`,
+        audiencePromise: `Give the buyer a creator-tested system they can apply immediately to ${input.topicQuery.toLowerCase()}.`,
+        selectedVideoIds: rankedContexts.slice(0, 5).map((row) => row.videoId),
+        evidenceRows,
+    };
+}
+
+function firstTranscriptSentence(value: string): string {
+    const sentence = value
+        .replace(/\s+/g, ' ')
+        .trim()
+        .match(/(.{40,220}?[.!?])(\s|$)/)?.[1];
+    return (sentence || value.replace(/\s+/g, ' ').trim().slice(0, 220)).trim();
+}
+
+function buildFallbackLibrarianPack(input: {
+    productType: ProductType;
+    productTitle: string;
+    topicQuery: string;
+    selectedContexts: KimiPipelineContext[];
+}): LibrarianPack {
+    return buildDeterministicLibrarianPack(input);
+}
+
 async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
     let handle: NodeJS.Timeout | null = null;
     try {
@@ -177,6 +325,20 @@ async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string
             work,
             new Promise<T>((_, reject) => {
                 handle = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (handle) clearTimeout(handle);
+    }
+}
+
+async function withSoftTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | null> {
+    let handle: NodeJS.Timeout | null = null;
+    try {
+        return await Promise.race([
+            work,
+            new Promise<null>((resolve) => {
+                handle = setTimeout(() => resolve(null), timeoutMs);
             }),
         ]);
     } finally {
@@ -262,7 +424,189 @@ function normalizeArchitectPlan(
 
 function evidenceForSection(section: ArchitectSection, contexts: KimiPipelineContext[]): string {
     const matches = contexts.filter((row) => section.sourceVideoIds.includes(row.videoId)).slice(0, 2);
-    return compactContext(matches.length > 0 ? matches : contexts.slice(0, 2), 2, 600);
+    return compactContext(matches.length > 0 ? matches : contexts.slice(0, 2), 2, 420);
+}
+
+function estimateSectionCompletionMaxTokens(input: {
+    sections: number;
+    totalWordTarget: number;
+}): number {
+    const baseEstimate = Math.ceil((input.totalWordTarget * 1.85) + (input.sections * 260));
+    return Math.max(2600, Math.min(7600, baseEstimate));
+}
+
+function estimateSingleSectionMaxTokens(input: {
+    productType: ProductType;
+    wordTarget: number;
+}): number {
+    const multiplier = input.productType === 'checklist_toolkit' ? 5.8 : 5.1;
+    const baseEstimate = Math.ceil((input.wordTarget * multiplier) + 220);
+    const ceiling = input.productType === 'checklist_toolkit' ? 1500 : 1325;
+    return Math.max(850, Math.min(ceiling, baseEstimate));
+}
+
+function buildSectionArtDirectionContext(input: {
+    architectPlan: ArchitectPlan;
+    designCanonContext: string;
+}): string {
+    return [
+        `Layout: ${input.architectPlan.shell.layoutStyle}`,
+        `Hierarchy: ${input.architectPlan.shell.visualHierarchy}`,
+        `Interaction: ${input.architectPlan.shell.interactionModel}`,
+        `Signature: ${input.architectPlan.shell.composerNotes}`,
+        `Canon: ${input.designCanonContext.replace(/\s+/g, ' ').trim().slice(0, 360)}`,
+    ].join('\n');
+}
+
+function ensureSectionMarkup(input: {
+    rawHtml: string;
+    section: ArchitectSection;
+}): string {
+    let html = input.rawHtml.trim();
+    if (!/<!--\s*sources:\s*[\s\S]*?-->/i.test(html)) {
+        html = `<!-- sources: ${input.section.sourceVideoIds.join(',')} -->\n${html}`;
+    }
+
+    const expectedIdPattern = new RegExp(
+        `<section[^>]*\\bid=["']${input.section.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`,
+        'i'
+    );
+
+    if (!expectedIdPattern.test(html)) {
+        if (/<section[^>]*\bid=["'][^"']+["']/i.test(html)) {
+            html = html.replace(
+                /(<section[^>]*\bid=["'])([^"']+)(["'])/i,
+                `$1${input.section.id}$3`
+            );
+        } else {
+            html = html.replace(/<section\b/i, `<section id="${input.section.id}"`);
+        }
+    }
+
+    return html.trim();
+}
+
+export function extractGeneratedSectionBlocks(input: {
+    rawHtml: string;
+    sections: ArchitectSection[];
+}): KimiSectionBlock[] {
+    const matches = Array.from(
+        input.rawHtml.matchAll(/((?:<!--\s*sources:\s*[\s\S]*?-->\s*)?<section\b[\s\S]*?<\/section>)/gi)
+    );
+    const rawBlocks = matches.map((match) => match[1].trim());
+    const usedIndexes = new Set<number>();
+
+    return input.sections.flatMap((section, index) => {
+        let matchedIndex = rawBlocks.findIndex((block, blockIndex) => {
+            if (usedIndexes.has(blockIndex)) return false;
+            const id = block.match(/<section[^>]*\bid=["']([^"']+)["']/i)?.[1]?.trim();
+            return id === section.id;
+        });
+
+        if (matchedIndex === -1 && rawBlocks[index] && !usedIndexes.has(index)) {
+            matchedIndex = index;
+        }
+
+        if (matchedIndex === -1) return [];
+        usedIndexes.add(matchedIndex);
+
+        return [{
+            id: section.id,
+            title: section.title,
+            sourceVideoIds: section.sourceVideoIds,
+            html: ensureSectionMarkup({
+                rawHtml: rawBlocks[matchedIndex],
+                section,
+            }),
+        }];
+    });
+}
+
+async function buildSectionBlocksBatch(input: {
+    productType: ProductType;
+    creatorDisplayName: string;
+    creatorHandle: string;
+    creatorDna: CreatorDNA;
+    designCanonContext: string;
+    architectPlan: ArchitectPlan;
+    marketOfferContext?: string | null;
+    selectedContexts: KimiPipelineContext[];
+}): Promise<KimiSectionBlock[]> {
+    if (input.architectPlan.sections.length > KIMI_SECTION_BATCH_ATTEMPT_MAX_SECTIONS) {
+        return [];
+    }
+
+    const totalWordTarget = input.architectPlan.sections.reduce((sum, section) => sum + section.wordTarget, 0);
+    const batchPrompt = input.architectPlan.sections.map((section, index) => [
+        `SECTION ${index + 1}`,
+        `ID: ${section.id}`,
+        `TITLE: ${section.title}`,
+        `OBJECTIVE: ${section.objective}`,
+        `LAYOUT HINT: ${section.layoutHint}`,
+        `REQUIRED ELEMENTS: ${section.requiredElements.join(', ') || 'grounded teaching, clear hierarchy'}`,
+        `WORD TARGET: ${section.wordTarget}`,
+        `SOURCE IDS: ${section.sourceVideoIds.join(', ')}`,
+        `EVIDENCE:\n${evidenceForSection(section, input.selectedContexts)}`,
+    ].join('\n')).join('\n\n');
+
+    const rawHtml = await withSoftTimeout(
+        requestKimiTextCompletion({
+            systemPrompt: `You are the Owny Kimi Batch Section Builder.
+Write every requested section of a premium creator digital product in one response.
+
+Rules:
+- Output ONLY concatenated HTML <section> blocks in the exact order requested.
+- For every section, start with <!-- sources: ... --> on the line above the section.
+- Every section must use the exact id provided.
+- No markdown fences. No <html>, <head>, or <body>.
+- Use clean shadcn-style Tailwind classes with clear hierarchy.
+- If the product type is checklist_toolkit, keep checklist controls genuinely interactive.`,
+            userPrompt: `PRODUCT TYPE: ${input.productType}
+CREATOR: ${input.creatorDisplayName} (@${input.creatorHandle})
+CREATOR MOOD: ${input.creatorDna.visual.mood}
+PRODUCT SHELL: ${input.architectPlan.shell.layoutStyle}; ${input.architectPlan.shell.visualHierarchy}; ${input.architectPlan.shell.interactionModel}
+${input.marketOfferContext ? `\n${input.marketOfferContext}\n` : ''}
+
+DESIGN CANON:
+${input.designCanonContext}
+
+${productScaffoldGuidance(input.productType)}
+${sectionFormatGuidance(input.productType)}
+
+CREATOR VOICE:
+- Tone: ${input.creatorDna.voice.tone}
+- Vocabulary: ${input.creatorDna.voice.vocabulary}
+- Speaking style: ${input.creatorDna.voice.speakingStyle}
+- Content focus: ${input.creatorDna.voice.contentFocus}
+
+SECTION BRIEFS:
+${batchPrompt}
+
+Return every section now as concatenated HTML blocks in the same order as the section briefs.`,
+            maxTokens: estimateSectionCompletionMaxTokens({
+                sections: input.architectPlan.sections.length,
+                totalWordTarget,
+            }),
+            thinking: 'disabled',
+            preset: 'creative_html',
+            operation: 'builder.sections.batch',
+        }),
+        KIMI_SECTION_BATCH_SOFT_TIMEOUT_MS
+    );
+
+    if (!rawHtml) {
+        log.warn('Kimi batched section builder timed out softly; falling back to per-section generation', {
+            productType: input.productType,
+            timeoutMs: KIMI_SECTION_BATCH_SOFT_TIMEOUT_MS,
+            sectionCount: input.architectPlan.sections.length,
+        });
+        return [];
+    }
+
+    return extractGeneratedSectionBlocks({
+        rawHtml,
+        sections: input.architectPlan.sections,
+    });
 }
 
 async function buildKimiLibrarianPack(input: {
@@ -272,11 +616,21 @@ async function buildKimiLibrarianPack(input: {
     creatorDisplayName: string;
     creatorHandle: string;
     creatorDnaContext: string;
+    designCanonContext: string;
+    marketOfferContext?: string | null;
     selectedContexts: KimiPipelineContext[];
 }): Promise<LibrarianPack> {
     const librarianContexts = input.selectedContexts.slice(0, 6);
-    const parsed = await requestKimiStructuredObject({
-        systemPrompt: `You are the Owny Kimi Librarian.
+    const seededPack = buildDeterministicLibrarianPack({
+        productType: input.productType,
+        productTitle: input.productTitle,
+        topicQuery: input.topicQuery,
+        selectedContexts: librarianContexts,
+    });
+    try {
+        const parsed = await withSoftTimeout(
+            requestKimiStructuredObject({
+                systemPrompt: `You are the Owny Kimi Librarian.
 Your job is to inspect creator transcript evidence and choose the strongest material for a premium digital product.
 Return only a JSON object.
 
@@ -290,6 +644,8 @@ TOPIC: ${input.topicQuery}
 CREATOR: ${input.creatorDisplayName} (@${input.creatorHandle})
 
 ${input.creatorDnaContext}
+${input.designCanonContext}
+${input.marketOfferContext ? `\n${input.marketOfferContext}\n` : ''}
 
 SOURCE LIBRARY:
 ${compactContext(librarianContexts, 6, 750)}
@@ -301,22 +657,53 @@ Return a JSON object with:
 - evidenceRows [{ videoId, title, whyItMatters, anchorQuote, extractionFocus[], sectionTitle, sectionObjective }]
 
 Aim for at least ${sectionCountTarget(input.productType)} evidenceRows when the source library supports it.`,
-        schema: LibrarianPackSchema,
-        maxTokens: 1800,
-        thinking: 'disabled',
-    });
+                schema: LibrarianPackSchema,
+                maxTokens: 1800,
+                thinking: 'enabled',
+                preset: 'analysis_json',
+                operation: 'builder.librarian_pack',
+            }),
+            KIMI_LIBRARIAN_SOFT_TIMEOUT_MS
+        );
 
-    const availableIds = new Set(librarianContexts.map((row) => row.videoId));
-    const selectedVideoIds = parsed.selectedVideoIds.filter((id) => availableIds.has(id));
+        if (!parsed) {
+            log.warn('Kimi librarian pack timed out softly; using deterministic pack', {
+                topicQuery: input.topicQuery,
+                productType: input.productType,
+                timeoutMs: KIMI_LIBRARIAN_SOFT_TIMEOUT_MS,
+            });
+            return seededPack;
+        }
 
-    return {
-        productAngle: parsed.productAngle.trim(),
-        audiencePromise: parsed.audiencePromise.trim(),
-        selectedVideoIds: selectedVideoIds.length > 0 ? selectedVideoIds : librarianContexts.slice(0, 5).map((row) => row.videoId),
-        evidenceRows: parsed.evidenceRows
+        const availableIds = new Set(librarianContexts.map((row) => row.videoId));
+        const selectedVideoIds = parsed.selectedVideoIds.filter((id) => availableIds.has(id));
+        const targetRowCount = Math.max(4, sectionCountTarget(input.productType));
+        const parsedRows = parsed.evidenceRows
             .filter((row) => availableIds.has(row.videoId))
-            .slice(0, 8),
-    };
+            .slice(0, 8);
+        const missingSeedRows = seededPack.evidenceRows
+            .filter((row) => !parsedRows.some((parsedRow) => parsedRow.videoId === row.videoId))
+            .slice(0, Math.max(0, targetRowCount - parsedRows.length));
+
+        return {
+            productAngle: parsed.productAngle.trim() || seededPack.productAngle,
+            audiencePromise: parsed.audiencePromise.trim() || seededPack.audiencePromise,
+            selectedVideoIds: selectedVideoIds.length > 0 ? selectedVideoIds : seededPack.selectedVideoIds,
+            evidenceRows: [...parsedRows, ...missingSeedRows].slice(0, 8),
+        };
+    } catch (error) {
+        log.warn('Kimi librarian pack failed; using deterministic fallback', {
+            topicQuery: input.topicQuery,
+            productType: input.productType,
+            error: error instanceof Error ? error.message : 'Unknown librarian error',
+        });
+        return buildFallbackLibrarianPack({
+            productType: input.productType,
+            productTitle: input.productTitle,
+            topicQuery: input.topicQuery,
+            selectedContexts: librarianContexts,
+        });
+    }
 }
 
 function buildArchitectPlanFromLibrarian(input: {
@@ -326,13 +713,22 @@ function buildArchitectPlanFromLibrarian(input: {
     creatorHandle: string;
     creativeDirection: CreativeDirection;
     librarianPack: LibrarianPack;
+    marketOfferBrief?: MarketOfferBrief | null;
     selectedContexts: KimiPipelineContext[];
 }): ArchitectPlan {
     const prefix = sectionPrefix(input.productType);
+    const offerAngle = input.marketOfferBrief?.offerAngle?.trim();
+    const promiseStyle = input.marketOfferBrief?.promiseStyle?.trim();
+    const packagingNotes = input.marketOfferBrief?.packagingNotes?.slice(0, 3) || [];
+    const differentiationHooks = input.marketOfferBrief?.differentiationHooks?.slice(0, 3) || [];
+
     return normalizeArchitectPlan(
         {
             title: input.productTitle,
-            subtitle: input.librarianPack.audiencePromise || input.creativeDirection.narrativeAngle,
+            subtitle: offerAngle
+                || promiseStyle
+                || input.librarianPack.audiencePromise
+                || input.creativeDirection.narrativeAngle,
             shell: {
                 eyebrow: 'Owny Studio',
                 layoutStyle: input.creativeDirection.layoutDNA,
@@ -353,13 +749,19 @@ function buildArchitectPlanFromLibrarian(input: {
             keyTakeaways: input.librarianPack.evidenceRows
                 .slice(0, 5)
                 .map((row) => row.sectionTitle || row.whyItMatters)
-                .filter(Boolean),
+                .filter(Boolean)
+                .concat(packagingNotes)
+                .concat(differentiationHooks)
+                .slice(0, 6),
             faq: [],
         },
         input.selectedContexts,
         input.productType,
         input.productTitle,
-        input.librarianPack.audiencePromise || input.creativeDirection.narrativeAngle
+        offerAngle
+            || promiseStyle
+            || input.librarianPack.audiencePromise
+            || input.creativeDirection.narrativeAngle
     );
 }
 
@@ -368,10 +770,16 @@ async function buildSectionBlock(input: {
     creatorDisplayName: string;
     creatorHandle: string;
     creatorDna: CreatorDNA;
+    designCanonContext: string;
     architectPlan: ArchitectPlan;
     section: ArchitectSection;
+    marketOfferContext?: string | null;
     selectedContexts: KimiPipelineContext[];
 }): Promise<KimiSectionBlock> {
+    const artDirectionContext = buildSectionArtDirectionContext({
+        architectPlan: input.architectPlan,
+        designCanonContext: input.designCanonContext,
+    });
     const html = await requestKimiTextCompletion({
         systemPrompt: `You are the Owny Kimi Section Builder.
 Write one premium section of a creator digital product.
@@ -399,6 +807,10 @@ ${evidenceForSection(input.section, input.selectedContexts)}
 
 OVERALL PRODUCT SHELL:
 ${JSON.stringify(input.architectPlan.shell, null, 2)}
+${input.marketOfferContext ? `\n${input.marketOfferContext}\n` : ''}
+
+ART DIRECTION:
+${artDirectionContext}
 
 ${productScaffoldGuidance(input.productType)}
 ${sectionFormatGuidance(input.productType)}
@@ -411,8 +823,13 @@ CREATOR VOICE:
 - Catchphrases: ${input.creatorDna.voice.catchphrases.join(', ') || 'none'}
 
 Return the section HTML now.`,
-        maxTokens: 1800,
+        maxTokens: estimateSingleSectionMaxTokens({
+            productType: input.productType,
+            wordTarget: input.section.wordTarget,
+        }),
         thinking: 'disabled',
+        preset: 'creative_html',
+        operation: `builder.section.${input.section.id}`,
     });
 
     return {
@@ -420,6 +837,61 @@ Return the section HTML now.`,
         title: input.section.title,
         sourceVideoIds: input.section.sourceVideoIds,
         html,
+    };
+}
+
+function buildFallbackSectionBlock(input: {
+    productType: ProductType;
+    section: ArchitectSection;
+    selectedContexts: KimiPipelineContext[];
+}): KimiSectionBlock {
+    const matches = input.selectedContexts.filter((row) => input.section.sourceVideoIds.includes(row.videoId)).slice(0, 2);
+    const contexts = matches.length > 0 ? matches : input.selectedContexts.slice(0, 2);
+    const sourceIds = contexts.map((row) => row.videoId);
+    const quote = contexts[0]?.transcriptContext
+        ? firstTranscriptSentence(contexts[0].transcriptContext)
+        : input.section.objective;
+    const bulletItems = Array.from(new Set(
+        contexts.flatMap((row) => (row.keySteps.length > 0 ? row.keySteps : row.topicTags))
+    )).slice(0, input.productType === 'checklist_toolkit' ? 5 : 4);
+
+    const bodyHtml = input.productType === 'checklist_toolkit'
+        ? `
+        <div class="mt-5 space-y-3">
+          ${bulletItems.map((item, index) => `
+            <label class="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <input type="checkbox" class="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400" />
+              <span>
+                <span class="block text-sm font-semibold text-slate-900">${escapeHtml(item || `Checklist item ${index + 1}`)}</span>
+                <span class="mt-1 block text-sm leading-6 text-slate-600">Apply this inside your own workflow before moving to the next step.</span>
+              </span>
+            </label>
+          `).join('\n')}
+        </div>`
+        : `
+        <ul class="mt-5 grid gap-3 sm:grid-cols-2">
+          ${bulletItems.map((item) => `
+            <li class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700 shadow-sm">${escapeHtml(item)}</li>
+          `).join('\n')}
+        </ul>`;
+
+    return {
+        id: input.section.id,
+        title: input.section.title,
+        sourceVideoIds: sourceIds,
+        html: `<!-- sources: ${sourceIds.join(',')} -->
+<section id="${escapeHtml(input.section.id)}" class="rounded-[28px] border border-slate-200 bg-white/92 px-5 py-6 shadow-sm backdrop-blur sm:px-6">
+  <div class="max-w-3xl">
+    <div class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">${escapeHtml(input.section.id.replace(/-/g, ' '))}</div>
+    <h2 class="mt-4 text-2xl font-semibold tracking-tight text-slate-950">${escapeHtml(input.section.title)}</h2>
+    <p class="mt-3 text-base leading-8 text-slate-600">${escapeHtml(input.section.objective)}</p>
+    <blockquote class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-700">
+      ${escapeHtml(quote)}
+    </blockquote>
+    ${bodyHtml}
+    <p class="mt-5 text-sm leading-7 text-slate-600">Use this section as a concrete checkpoint inside the larger system rather than a generic inspirational note.</p>
+  </div>
+</section>`,
     };
 }
 
@@ -556,6 +1028,8 @@ export async function runKimiSectionedProductPipeline(input: {
     creatorDna: CreatorDNA;
     creatorDnaContext: string;
     designCanonContext: string;
+    marketOfferContext?: string | null;
+    marketOfferBrief?: MarketOfferBrief | null;
     creativeDirection: CreativeDirection;
     selectedContexts: KimiPipelineContext[];
 }): Promise<KimiSectionedProductPipelineResult> {
@@ -571,9 +1045,11 @@ export async function runKimiSectionedProductPipeline(input: {
             creatorDisplayName: input.creatorDisplayName,
             creatorHandle: input.creatorHandle,
             creatorDnaContext: input.creatorDnaContext,
+            designCanonContext: input.designCanonContext,
+            marketOfferContext: input.marketOfferContext,
             selectedContexts: input.selectedContexts,
         }),
-        45_000,
+        KIMI_LIBRARIAN_TIMEOUT_MS,
         'Kimi librarian'
     );
     stageTimingsMs.librarian = Date.now() - librarianStart;
@@ -591,27 +1067,68 @@ export async function runKimiSectionedProductPipeline(input: {
         creatorHandle: input.creatorHandle,
         creativeDirection: input.creativeDirection,
         librarianPack,
+        marketOfferBrief: input.marketOfferBrief,
         selectedContexts: workingContexts,
     });
 
     const sectionsStart = Date.now();
-    const sectionBlocks = await Promise.all(
-        architectPlan.sections.map((section) =>
-            withTimeout(
-                buildSectionBlock({
+    const batchStart = Date.now();
+    const batchedSectionBlocks = await buildSectionBlocksBatch({
+        productType: input.productType,
+        creatorDisplayName: input.creatorDisplayName,
+        creatorHandle: input.creatorHandle,
+        creatorDna: input.creatorDna,
+        designCanonContext: input.designCanonContext,
+        architectPlan,
+        marketOfferContext: input.marketOfferContext,
+        selectedContexts: workingContexts,
+    });
+    stageTimingsMs.sectionsBatch = Date.now() - batchStart;
+
+    const batchedById = new Map(batchedSectionBlocks.map((section) => [section.id, section]));
+    const missingSections = architectPlan.sections.filter((section) => !batchedById.has(section.id));
+    const fallbackSectionBlocks = await Promise.all(
+        missingSections.map(async (section) => {
+            try {
+                return await withTimeout(
+                    buildSectionBlock({
+                        productType: input.productType,
+                        creatorDisplayName: input.creatorDisplayName,
+                        creatorHandle: input.creatorHandle,
+                        creatorDna: input.creatorDna,
+                        designCanonContext: input.designCanonContext,
+                        architectPlan,
+                        section,
+                        marketOfferContext: input.marketOfferContext,
+                        selectedContexts: workingContexts,
+                    }),
+                    KIMI_SECTION_TIMEOUT_MS,
+                    `Kimi section ${section.id}`
+                );
+            } catch (error) {
+                log.warn('Kimi section builder failed; using deterministic fallback', {
+                    sectionId: section.id,
                     productType: input.productType,
-                    creatorDisplayName: input.creatorDisplayName,
-                    creatorHandle: input.creatorHandle,
-                    creatorDna: input.creatorDna,
-                    architectPlan,
+                    error: error instanceof Error ? error.message : 'Unknown section error',
+                });
+                return buildFallbackSectionBlock({
+                    productType: input.productType,
                     section,
                     selectedContexts: workingContexts,
-                }),
-                70_000,
-                `Kimi section ${section.id}`
-            )
-        )
+                });
+            }
+        })
     );
+    const fallbackById = new Map(fallbackSectionBlocks.map((section) => [section.id, section]));
+    const sectionBlocks = architectPlan.sections.map((section) => (
+        batchedById.get(section.id)
+        || fallbackById.get(section.id)
+        || buildFallbackSectionBlock({
+            productType: input.productType,
+            section,
+            selectedContexts: workingContexts,
+        })
+    ));
     stageTimingsMs.sections = Date.now() - sectionsStart;
 
     const shellStart = Date.now();

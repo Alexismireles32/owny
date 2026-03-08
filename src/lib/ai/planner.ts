@@ -131,6 +131,8 @@ ${JSON.stringify(sourcesContext, null, 1)}
                 userPrompt: userMessage,
                 schema: BuildPacketSchema,
                 maxTokens: 12000,
+                preset: 'analysis_json',
+                operation: 'planner.build_packet',
             });
 
             const packet = parsed as unknown as BuildPacket;

@@ -6,8 +6,12 @@ import type { BuildPacket } from '@/types/build-packet';
 import type { ProductDSL, DSLBlock, DSLPage } from '@/types/product-dsl';
 import {
     DEFAULT_KIMI_MODEL,
-    type MoonshotChatCompletionRequest,
+    getKimiClient,
+    requestKimiChatCompletion,
+    type KimiTaskPreset,
+    type KimiThinkingMode,
 } from '@/lib/ai/kimi';
+import { requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
 import { postProcessHTML } from '@/lib/ai/post-process-html';
 import { log } from '@/lib/logger';
 import { hybridSearch } from '@/lib/indexing/search';
@@ -302,8 +306,10 @@ interface AgentConfig {
     tools: OpenAI.Chat.ChatCompletionTool[];
     toolExecutors: Record<string, ToolExecutor>;
     maxIterations: number;
-    temperature: number;
     maxTokens: number;
+    preset: KimiTaskPreset;
+    thinkingMode: KimiThinkingMode;
+    operation: string;
 }
 
 async function runAgentLoop(
@@ -320,19 +326,18 @@ async function runAgentLoop(
     const seenCalls = new Set<string>();
 
     for (let i = 0; i < config.maxIterations; i++) {
-        const response = await client.chat.completions.create(
-            {
-                model: config.model,
-                messages,
-                tools: config.tools.length > 0 ? config.tools : undefined,
-                tool_choice: config.tools.length > 0 ? 'auto' : undefined,
-                parallel_tool_calls: true, // Research v2 §13
-                thinking: { type: 'disabled' },
-                temperature: config.temperature,
-                top_p: 0.95,
-                max_tokens: config.maxTokens,
-            } as MoonshotChatCompletionRequest
-        );
+        const response = await requestKimiChatCompletion({
+            client,
+            model: config.model,
+            messages,
+            tools: config.tools.length > 0 ? config.tools : undefined,
+            toolChoice: config.tools.length > 0 ? 'auto' : undefined,
+            parallelToolCalls: true,
+            thinking: config.thinkingMode,
+            preset: config.preset,
+            maxTokens: config.maxTokens,
+            operation: `${config.operation}.iteration_${i + 1}`,
+        });
 
         const choice = response.choices[0];
 
@@ -427,19 +432,18 @@ async function* runAgentLoopStreaming(
     ];
 
     for (let i = 0; i < config.maxIterations; i++) {
-        const response = await client.chat.completions.create(
-            {
-                model: config.model,
-                messages,
-                tools: config.tools.length > 0 ? config.tools : undefined,
-                tool_choice: config.tools.length > 0 ? 'auto' : undefined,
-                parallel_tool_calls: true, // Research v2 §13
-                thinking: { type: 'disabled' },
-                temperature: config.temperature,
-                top_p: 0.95,
-                max_tokens: config.maxTokens,
-            } as MoonshotChatCompletionRequest
-        );
+        const response = await requestKimiChatCompletion({
+            client,
+            model: config.model,
+            messages,
+            tools: config.tools.length > 0 ? config.tools : undefined,
+            toolChoice: config.tools.length > 0 ? 'auto' : undefined,
+            parallelToolCalls: true,
+            thinking: config.thinkingMode,
+            preset: config.preset,
+            maxTokens: config.maxTokens,
+            operation: `${config.operation}.stream_iteration_${i + 1}`,
+        });
 
         const choice = response.choices[0];
 
@@ -550,10 +554,7 @@ export class KimiBuilder implements AIModelAdapter {
     private client: OpenAI;
 
     constructor() {
-        this.client = new OpenAI({
-            apiKey: process.env.KIMI_API_KEY || '',
-            baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-        });
+        this.client = getKimiClient();
     }
 
     private async buildAgentConfig(creatorId?: string): Promise<AgentConfig> {
@@ -569,8 +570,10 @@ export class KimiBuilder implements AIModelAdapter {
             tools: [...customTools, ...formulaTools],
             toolExecutors: { ...customExecutors, ...formulaExecutors },
             maxIterations: 5,
-            temperature: 0.6,
             maxTokens: 16384,
+            preset: 'analysis_json',
+            thinkingMode: 'disabled',
+            operation: 'legacy.dsl.agent',
         };
     }
 
@@ -605,24 +608,13 @@ export class KimiBuilder implements AIModelAdapter {
         instruction: string,
         context: ProductContext
     ): Promise<DSLBlock> {
-        const response = await this.client.chat.completions.create(
-            {
-                model: DEFAULT_KIMI_MODEL,
-                messages: [
-                    { role: 'system', content: IMPROVE_SYSTEM_PROMPT },
-                    {
-                        role: 'user',
-                        content: `Block to improve:\n${JSON.stringify(block)}\n\nInstruction: ${instruction}\n\nContext: product type = ${context.productType}, page type = ${context.pageType}`,
-                    },
-                ],
-                thinking: { type: 'disabled' },
-                temperature: 0.6,
-                top_p: 0.95,
-                max_tokens: 4096,
-            } as MoonshotChatCompletionRequest
-        );
-
-        const text = response.choices[0]?.message?.content || '';
+        const text = await requestKimiTextCompletion({
+            systemPrompt: IMPROVE_SYSTEM_PROMPT,
+            userPrompt: `Block to improve:\n${JSON.stringify(block)}\n\nInstruction: ${instruction}\n\nContext: product type = ${context.productType}, page type = ${context.pageType}`,
+            maxTokens: 4096,
+            preset: 'surgical_edit',
+            operation: 'legacy.dsl.improve_block',
+        });
         const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
         return JSON.parse(jsonStr) as DSLBlock;
     }
@@ -1047,24 +1039,13 @@ export async function generateProductWithRetry(
     let model: string;
 
     try {
-        const kimi = new OpenAI({
-            apiKey: process.env.KIMI_API_KEY || '',
-            baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
+        html = await requestKimiTextCompletion({
+            systemPrompt: HTML_SYSTEM_PROMPT,
+            userPrompt: userContent,
+            maxTokens: 16000,
+            preset: 'creative_html',
+            operation: 'legacy.html.generate',
         });
-        const result = await kimi.chat.completions.create(
-            {
-                model: DEFAULT_KIMI_MODEL,
-                messages: [
-                    { role: 'system', content: HTML_SYSTEM_PROMPT },
-                    { role: 'user', content: userContent },
-                ],
-                thinking: { type: 'disabled' },
-                temperature: 0.6,
-                max_tokens: 16000,
-            } as MoonshotChatCompletionRequest
-        );
-
-        html = result.choices[0]?.message?.content ?? '';
         model = `${DEFAULT_KIMI_MODEL}-html`;
         log.info('HTML generated', { model, length: html.length });
     } catch (err) {
@@ -1112,26 +1093,14 @@ export async function improveProductHTML(
     currentHtml: string,
     instruction: string
 ): Promise<{ html: string; model: string }> {
-    const kimi = new OpenAI({
-        apiKey: process.env.KIMI_API_KEY || '',
-        baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1',
-    });
-    const result = await kimi.chat.completions.create(
-        {
-            model: DEFAULT_KIMI_MODEL,
-            messages: [
-                { role: 'system', content: HTML_IMPROVE_PROMPT },
-                {
-                    role: 'user',
-                    content: `Here is the current HTML page:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document.`,
-                },
-            ],
-            thinking: { type: 'disabled' },
-            temperature: 0.6,
-            max_tokens: 16000,
-        } as MoonshotChatCompletionRequest
+    const html = postProcessHTML(
+        await requestKimiTextCompletion({
+            systemPrompt: HTML_IMPROVE_PROMPT,
+            userPrompt: `Here is the current HTML page:\n\n${currentHtml}\n\nIMPROVEMENT INSTRUCTION: ${instruction}\n\nOutput the complete improved HTML document.`,
+            maxTokens: 16000,
+            preset: 'surgical_edit',
+            operation: 'legacy.html.improve',
+        })
     );
-
-    const html = postProcessHTML(result.choices[0]?.message?.content ?? '');
     return { html, model: `${DEFAULT_KIMI_MODEL}-improve` };
 }

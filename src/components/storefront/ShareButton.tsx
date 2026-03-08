@@ -2,6 +2,12 @@
 
 // Share / Copy Link button for the storefront
 import { useState } from 'react';
+import { Check, Share2 } from 'lucide-react';
+
+function withAlpha(color: string, alpha: number): string {
+    const percent = Math.max(0, Math.min(100, Math.round(alpha * 100)));
+    return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+}
 
 export function ShareButton({
     handle,
@@ -38,23 +44,17 @@ export function ShareButton({
     return (
         <button
             onClick={handleCopy}
+            className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-[0_16px_36px_-28px_rgba(15,23,42,0.38)] transition-transform duration-200 hover:-translate-y-0.5"
             style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                padding: '0.5rem 1rem',
-                borderRadius: '9999px',
-                border: `1px solid ${primaryColor}40`,
-                background: `${primaryColor}15`,
+                borderColor: withAlpha(primaryColor, 0.22),
+                background: `linear-gradient(180deg, ${withAlpha(primaryColor, 0.14)}, ${withAlpha(primaryColor, 0.07)})`,
                 color: primaryColor,
-                fontWeight: 600,
-                fontSize: '0.8rem',
                 cursor: 'pointer',
-                transition: 'all 0.2s ease',
                 fontFamily: 'inherit',
             }}
         >
-            {copied ? '✓ Copied!' : '🔗 Share Store'}
+            {copied ? <Check className="size-4" /> : <Share2 className="size-4" />}
+            {copied ? 'Link copied' : 'Share store'}
         </button>
     );
 }

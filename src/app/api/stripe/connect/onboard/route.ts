@@ -4,6 +4,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe';
 import { NextResponse } from 'next/server';
+import { getStripeConnectSetupMessage, hasUsableStripeSecretKey } from '@/lib/stripe-mode';
 
 export async function POST() {
     const supabase = await createClient();
@@ -25,6 +26,10 @@ export async function POST() {
 
     if (!creator) {
         return NextResponse.json({ error: 'Creator profile required' }, { status: 403 });
+    }
+
+    if (!hasUsableStripeSecretKey()) {
+        return NextResponse.json({ error: getStripeConnectSetupMessage() }, { status: 503 });
     }
 
     const stripe = getStripe();

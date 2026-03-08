@@ -3,9 +3,10 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { buildBrowserQaFeedbackForPrompt, runProductBrowserQa } from '@/lib/ai/browser-qa';
 import { buildCreatorDNA, buildCreatorDNAContext } from '@/lib/ai/creator-dna';
 import { buildDesignCanonContext, chooseCreativeDirection, getEvergreenDesignCanon } from '@/lib/ai/design-canon';
-import { runEvergreenCriticLoop } from '@/lib/ai/critic-loop';
+import { runEvergreenCriticLoop, runGuidedCriticRepairPass } from '@/lib/ai/critic-loop';
 import {
     chooseStricterImproveBaseline,
     getImproveSaveRejection,
@@ -13,8 +14,9 @@ import {
     parseImproveQualitySnapshot,
     toImproveQualitySnapshot,
 } from '@/lib/ai/improve-save-policy';
-import { improveProductWithKimiStages } from '@/lib/ai/kimi-product-improve';
+import { extractSections, improveProductWithKimiStages } from '@/lib/ai/kimi-product-improve';
 import { evaluateProductQuality } from '@/lib/ai/quality-gates';
+import { loadSourceEvidenceBundle } from '@/lib/ai/source-evidence';
 import { log } from '@/lib/logger';
 import { loadCreatorCatalogHtml } from '@/lib/products/catalog-html';
 import type { ProductType } from '@/types/build-packet';
@@ -34,7 +36,8 @@ function getServiceDb() {
 }
 
 const IMPROVE_TIMEOUT_MS = 240_000;
-const CRITIC_LOOP_TIMEOUT_MS = 70_000;
+const CRITIC_LOOP_TIMEOUT_MS = 120_000;
+const BROWSER_QA_TIMEOUT_MS = 25_000;
 
 function normalizeProductType(value: unknown): ProductType {
     switch (value) {
@@ -56,6 +59,56 @@ function extractHtmlTextContext(html: string): string {
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 12000);
+}
+
+function isQualityEvaluationBetter(
+    candidate: ReturnType<typeof evaluateProductQuality>,
+    current: ReturnType<typeof evaluateProductQuality>
+): boolean {
+    if (candidate.overallPassed && !current.overallPassed) return true;
+    if (candidate.failingGates.length !== current.failingGates.length) {
+        return candidate.failingGates.length < current.failingGates.length;
+    }
+    return candidate.overallScore > current.overallScore;
+}
+
+function salvageSectionedImprove(input: {
+    currentHtml: string;
+    candidateHtml: string;
+    touchedSectionIds: string[];
+    evaluate: (html: string) => ReturnType<typeof evaluateProductQuality>;
+}): {
+    html: string;
+    evaluation: ReturnType<typeof evaluateProductQuality>;
+    revertedSectionIds: string[];
+} {
+    const originalSections = new Map(extractSections(input.currentHtml).map((section) => [section.id, section.rawHtml]));
+    const candidateSections = new Map(extractSections(input.candidateHtml).map((section) => [section.id, section.rawHtml]));
+
+    let bestHtml = input.candidateHtml;
+    let bestEvaluation = input.evaluate(bestHtml);
+    const revertedSectionIds: string[] = [];
+
+    for (const sectionId of input.touchedSectionIds) {
+        const originalSection = originalSections.get(sectionId);
+        const candidateSection = candidateSections.get(sectionId);
+        if (!originalSection || !candidateSection) continue;
+        if (!bestHtml.includes(candidateSection)) continue;
+
+        const revertedHtml = bestHtml.replace(candidateSection, originalSection);
+        const revertedEvaluation = input.evaluate(revertedHtml);
+        if (isQualityEvaluationBetter(revertedEvaluation, bestEvaluation)) {
+            bestHtml = revertedHtml;
+            bestEvaluation = revertedEvaluation;
+            revertedSectionIds.push(sectionId);
+        }
+    }
+
+    return {
+        html: bestHtml,
+        evaluation: bestEvaluation,
+        revertedSectionIds,
+    };
 }
 
 async function withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -167,6 +220,7 @@ export async function POST(request: Request) {
     const brandTokens = creatorProfile.brand_tokens as Record<string, unknown> | null;
     const qualityWeights = parseQualityWeights(priorBuildPacket) || designCanon.qualityWeights;
     const catalogHtml = await loadCreatorCatalogHtml(db, creator.id, { excludeProductId: productId });
+    const sourceEvidenceBundle = await loadSourceEvidenceBundle(db, sourceVideoIds);
 
     const encoder = new TextEncoder();
 
@@ -200,6 +254,9 @@ export async function POST(request: Request) {
                         creatorDisplayName: creatorProfile.display_name || creatorProfile.handle,
                         creatorHandle: creatorProfile.handle,
                         creatorDna,
+                        designCanonContext,
+                        globalEvidenceContext: sourceEvidenceBundle.combinedContext,
+                        sourceEvidenceByVideoId: sourceEvidenceBundle.byVideoId,
                     }),
                     IMPROVE_TIMEOUT_MS,
                     'Kimi staged improve'
@@ -215,6 +272,15 @@ export async function POST(request: Request) {
 
                 let qualityEvaluation = evaluateProductQuality({
                     html: fullHtml,
+                    productType,
+                    sourceVideoIds,
+                    catalogHtml,
+                    brandTokens,
+                    creatorHandle: creatorProfile.handle,
+                    qualityWeights,
+                });
+                const evaluateCandidateHtml = (html: string) => evaluateProductQuality({
+                    html,
                     productType,
                     sourceVideoIds,
                     catalogHtml,
@@ -238,6 +304,36 @@ export async function POST(request: Request) {
                 let criticIterations = 0;
                 let criticModels: string[] = [];
                 const stageTimingsMs = { ...improveResult.stageTimingsMs } as Record<string, number>;
+                let browserQaReport: Awaited<ReturnType<typeof runProductBrowserQa>> | null = null;
+                let initialBrowserQaReport: Awaited<ReturnType<typeof runProductBrowserQa>> | null = null;
+                let browserQaRepairAttempted = false;
+                let browserQaRepairModel: string | null = null;
+                let salvagedSectionIds: string[] = [];
+
+                if (!qualityEvaluation.overallPassed && improveResult.touchedSectionIds.length > 0) {
+                    const salvageStart = Date.now();
+                    const salvaged = salvageSectionedImprove({
+                        currentHtml,
+                        candidateHtml: fullHtml,
+                        touchedSectionIds: improveResult.touchedSectionIds,
+                        evaluate: evaluateCandidateHtml,
+                    });
+
+                    if (isQualityEvaluationBetter(salvaged.evaluation, qualityEvaluation)) {
+                        salvagedSectionIds = salvaged.revertedSectionIds;
+                        fullHtml = salvaged.html;
+                        qualityEvaluation = salvaged.evaluation;
+                        stageTimingsMs.sectionSalvage = Date.now() - salvageStart;
+                        if (salvagedSectionIds.length > 0) {
+                            send({
+                                type: 'status',
+                                message: `🛟 Rebalanced ${salvagedSectionIds.length} section edit(s) to preserve draft quality.`,
+                                phase: 'building',
+                            });
+                            send({ type: 'html_chunk', html: fullHtml });
+                        }
+                    }
+                }
 
                 if (!qualityEvaluation.overallPassed) {
                     send({
@@ -287,7 +383,97 @@ export async function POST(request: Request) {
 
                 send({
                     type: 'status',
-                    message: `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'})`,
+                    message: '🔎 Running browser QA on desktop and mobile...',
+                    phase: 'building',
+                });
+
+                const browserQaStart = Date.now();
+                browserQaReport = await withTimeout(
+                    runProductBrowserQa({
+                        html: fullHtml,
+                        productType,
+                    }),
+                    BROWSER_QA_TIMEOUT_MS,
+                    'Browser QA'
+                );
+                stageTimingsMs.browserQa = Date.now() - browserQaStart;
+                initialBrowserQaReport = browserQaReport;
+
+                if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+                    send({
+                        type: 'status',
+                        message: `⚠️ Browser QA flagged issues${browserQaReport.score !== null ? ` at ${browserQaReport.score}/100` : ''}. Attempting a targeted Kimi repair pass...`,
+                        phase: 'building',
+                    });
+
+                    const browserQaRepairStart = Date.now();
+                    browserQaRepairAttempted = true;
+
+                    try {
+                        const repairFeedback = buildBrowserQaFeedbackForPrompt(browserQaReport);
+                        const repairResult = await withTimeout(
+                            runGuidedCriticRepairPass({
+                                html: fullHtml,
+                                feedback: repairFeedback,
+                                productType,
+                                creatorHandle: creatorProfile.handle,
+                                creatorDisplayName: creatorProfile.display_name || creatorProfile.handle,
+                                topicQuery: product.title,
+                                originalRequest: instruction,
+                                creatorDnaContext,
+                                designCanonContext,
+                                directionId: creativeDirection.id,
+                                contentContext: extractHtmlTextContext(fullHtml),
+                                preferredModel: 'kimi',
+                            }),
+                            CRITIC_LOOP_TIMEOUT_MS,
+                            'Browser QA repair'
+                        );
+                        stageTimingsMs.browserQaRepair = Date.now() - browserQaRepairStart;
+                        browserQaRepairModel = repairResult.model;
+                        criticIterations += 1;
+                        criticModels = [...criticModels, repairResult.model];
+                        fullHtml = repairResult.html;
+                        qualityEvaluation = evaluateProductQuality({
+                            html: fullHtml,
+                            productType,
+                            sourceVideoIds,
+                            catalogHtml,
+                            brandTokens,
+                            creatorHandle: creatorProfile.handle,
+                            qualityWeights,
+                        });
+                        send({ type: 'html_chunk', html: fullHtml });
+                        send({
+                            type: 'status',
+                            message: '🔁 Re-running browser QA after the targeted repair...',
+                            phase: 'building',
+                        });
+
+                        const browserQaRetryStart = Date.now();
+                        browserQaReport = await withTimeout(
+                            runProductBrowserQa({
+                                html: fullHtml,
+                                productType,
+                            }),
+                            BROWSER_QA_TIMEOUT_MS,
+                            'Browser QA retry'
+                        );
+                        stageTimingsMs.browserQaRetry = Date.now() - browserQaRetryStart;
+                    } catch (browserQaRepairError) {
+                        stageTimingsMs.browserQaRepair = stageTimingsMs.browserQaRepair || CRITIC_LOOP_TIMEOUT_MS;
+                        log.warn('Improve browser QA repair pass failed; keeping best available HTML', {
+                            error: browserQaRepairError instanceof Error ? browserQaRepairError.message : 'Unknown browser QA repair error',
+                            productId,
+                        });
+                    }
+                }
+
+                send({
+                    type: 'status',
+                    message: browserQaReport.skipped
+                        ? `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'}). Browser QA skipped in this runtime.`
+                        : `✅ Quality score ${qualityEvaluation.overallScore}/100 (${qualityEvaluation.overallPassed ? 'pass' : 'partial pass'}). Browser QA ${browserQaRepairAttempted ? (browserQaReport.passed ? 'passed after targeted repair' : 'still flagged issues') : (browserQaReport.passed ? 'passed' : 'flagged issues')}${browserQaReport.score !== null ? ` at ${browserQaReport.score}/100` : ''}.`,
                     phase: 'building',
                 });
                 send({ type: 'html_complete', html: fullHtml });
@@ -316,6 +502,21 @@ export async function POST(request: Request) {
                         nextPassed: qualityEvaluation.overallPassed,
                         priorFailingGateCount: priorQuality.failingGateCount,
                         nextFailingGateCount: qualityEvaluation.failingGates.length,
+                    });
+                    close();
+                    return;
+                }
+
+                if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+                    send({
+                        type: 'error',
+                        message: 'Browser QA found desktop or mobile rendering issues. The preview was generated, but the saved version was left unchanged.',
+                        manualEditRequired: true,
+                        qualityScore: qualityEvaluation.overallScore,
+                        browserQaScore: browserQaReport.score,
+                        browserQaIssues: browserQaReport.issues,
+                        browserQaViewports: browserQaReport.viewports,
+                        candidateHtml: fullHtml,
                     });
                     close();
                     return;
@@ -359,12 +560,25 @@ export async function POST(request: Request) {
                             creatorDisplayName: creatorProfile.display_name,
                             creatorHandle: creatorProfile.handle,
                             qualityWeights,
+                            salvagedSectionIds,
                             qualityOverallScore: qualityEvaluation.overallScore,
                             qualityOverallPassed: qualityEvaluation.overallPassed,
                             qualityFailingGates: qualityEvaluation.failingGates,
                             qualityGateScores: gateScores,
                             criticIterations,
                             criticModels,
+                            browserQaInitialScore: initialBrowserQaReport?.score ?? browserQaReport?.score ?? null,
+                            browserQaInitialPassed: initialBrowserQaReport?.passed ?? browserQaReport?.passed ?? null,
+                            browserQaInitialSkipped: initialBrowserQaReport?.skipped ?? browserQaReport?.skipped ?? false,
+                            browserQaInitialIssues: initialBrowserQaReport?.issues || [],
+                            browserQaInitialViewports: initialBrowserQaReport?.viewports || [],
+                            browserQaRepairAttempted,
+                            browserQaRepairModel,
+                            browserQaScore: browserQaReport?.score ?? null,
+                            browserQaPassed: browserQaReport?.passed ?? null,
+                            browserQaSkipped: browserQaReport?.skipped ?? false,
+                            browserQaIssues: browserQaReport?.issues || [],
+                            browserQaViewports: browserQaReport?.viewports || [],
                         },
                         dsl_json: {},
                         generated_html: fullHtml,
@@ -386,6 +600,8 @@ export async function POST(request: Request) {
                     versionId: version?.id,
                     qualityScore: qualityEvaluation.overallScore,
                     qualityPassed: qualityEvaluation.overallPassed,
+                    browserQaScore: browserQaReport?.score ?? null,
+                    browserQaPassed: browserQaReport?.passed ?? null,
                     htmlBuildMode: improveResult.htmlBuildMode,
                 });
 

@@ -23,6 +23,7 @@ export default function SignUpPage() {
 function SignUpForm() {
     const searchParams = useSearchParams();
     const handleFromQuery = (searchParams.get('handle') || '').replace(/^@/, '').trim().toLowerCase();
+    const nextFromQuery = sanitizeNextPath(searchParams.get('next'));
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -90,7 +91,7 @@ function SignUpForm() {
                 emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
                     handleFromQuery
                         ? `/onboard?handle=${encodeURIComponent(handleFromQuery)}`
-                        : '/dashboard'
+                        : nextFromQuery
                 )}`,
             },
         });
@@ -127,7 +128,7 @@ function SignUpForm() {
                     return;
                 }
             }
-            router.push('/progress');
+            router.push(handleFromQuery ? '/progress' : nextFromQuery);
             router.refresh();
             return;
         }
@@ -265,7 +266,7 @@ function SignUpForm() {
                     <div className="text-center text-sm text-muted-foreground">
                         Already have an account?{' '}
                         <Link
-                            href={handleFromQuery ? `/sign-in?handle=${encodeURIComponent(handleFromQuery)}` : '/sign-in'}
+                            href={buildAuthLink('/sign-in', { handle: handleFromQuery, next: nextFromQuery })}
                             className="text-primary hover:underline font-medium"
                         >
                             Sign In
@@ -275,4 +276,17 @@ function SignUpForm() {
             </Card>
         </div>
     );
+}
+
+function sanitizeNextPath(next: string | null): string {
+    if (!next || !next.startsWith('/')) return '/dashboard';
+    return next;
+}
+
+function buildAuthLink(basePath: '/sign-up' | '/sign-in', params: { handle?: string; next?: string }): string {
+    const search = new URLSearchParams();
+    if (params.handle) search.set('handle', params.handle);
+    if (params.next && params.next !== '/dashboard') search.set('next', params.next);
+    const query = search.toString();
+    return query ? `${basePath}?${query}` : basePath;
 }

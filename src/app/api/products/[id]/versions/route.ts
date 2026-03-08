@@ -3,6 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { runProductBrowserQa } from '@/lib/ai/browser-qa';
 import { getEvergreenDesignCanon } from '@/lib/ai/design-canon';
 import {
     chooseStricterImproveBaseline,
@@ -125,6 +126,10 @@ export async function POST(
         creatorHandle: creator.handle,
         qualityWeights,
     });
+    const browserQaReport = await runProductBrowserQa({
+        html: generatedHtml,
+        productType,
+    });
 
     const previousQuality = chooseStricterImproveBaseline(
         parseImproveQualitySnapshot(activeVersion?.build_packet || null),
@@ -155,6 +160,24 @@ export async function POST(
                 qualityScore: nextQuality.overallScore,
                 qualityPassed: nextQuality.overallPassed,
                 failingGates: nextQuality.failingGates,
+                browserQaScore: browserQaReport.score,
+                browserQaPassed: browserQaReport.passed,
+            },
+        }, { status: 422 });
+    }
+
+    if (browserQaReport.attempted && !browserQaReport.skipped && !browserQaReport.passed) {
+        return NextResponse.json({
+            error: 'Browser QA found desktop or mobile rendering issues. The active version was left unchanged.',
+            manualEditRequired: true,
+            metadata: {
+                qualityScore: nextQuality.overallScore,
+                qualityPassed: nextQuality.overallPassed,
+                failingGates: nextQuality.failingGates,
+                browserQaScore: browserQaReport.score,
+                browserQaPassed: browserQaReport.passed,
+                browserQaIssues: browserQaReport.issues,
+                browserQaViewports: browserQaReport.viewports,
             },
         }, { status: 422 });
     }
@@ -194,6 +217,11 @@ export async function POST(
         qualityFailingGates: nextQuality.failingGates,
         qualityGateScores: gateScores,
         maxCatalogSimilarity: nextQuality.maxCatalogSimilarity,
+        browserQaScore: browserQaReport.score,
+        browserQaPassed: browserQaReport.passed,
+        browserQaSkipped: browserQaReport.skipped,
+        browserQaIssues: browserQaReport.issues,
+        browserQaViewports: browserQaReport.viewports,
     };
 
     const { data: version, error } = await supabase
@@ -224,6 +252,8 @@ export async function POST(
             qualityScore: nextQuality.overallScore,
             qualityPassed: nextQuality.overallPassed,
             failingGates: nextQuality.failingGates,
+            browserQaScore: browserQaReport.score,
+            browserQaPassed: browserQaReport.passed,
         },
     }, { status: 201 });
 }

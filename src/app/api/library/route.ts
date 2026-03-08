@@ -29,7 +29,7 @@ export async function GET() {
                 created_at,
                 products(
                     id, slug, type, title, description, price_cents, currency,
-                    creators(handle, display_name, avatar_url)
+                    creators!products_creator_id_fkey(handle, display_name, avatar_url)
                 )
             `)
             .eq('buyer_profile_id', user.id)

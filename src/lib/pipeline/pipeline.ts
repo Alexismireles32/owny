@@ -420,10 +420,7 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
                 });
 
             if (transcriptError) {
-                log.error('Pipeline 0B: transcript upsert error', {
-                    creatorId,
-                    error: transcriptError.message,
-                });
+                throw new Error(`Pipeline 0B: transcript upsert failed: ${transcriptError.message}`);
             }
         }
 
@@ -460,6 +457,8 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
         let indexingFailures = 0;
         let fallbackChunkedVideos = 0;
 
+        let videosProcessed = 0;
+
         for (const videoId of videoIds) {
             try {
                 const result = await indexVideo(supabase, videoId);
@@ -489,6 +488,13 @@ export async function runScrapePipeline(creatorId: string, handle: string): Prom
                     videoId,
                     error: error instanceof Error ? error.message : 'Unknown indexing error',
                 });
+            }
+
+            // Heartbeat: touch updated_at every 10 videos so the status API
+            // doesn't consider this pipeline stale during a long indexing run.
+            videosProcessed += 1;
+            if (videosProcessed % 10 === 0) {
+                await setCreatorStatus(creatorId, 'indexing');
             }
         }
 

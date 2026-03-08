@@ -191,6 +191,8 @@ ${JSON.stringify(compressedCards, null, 1)}`;
             userPrompt: userMessage,
             schema: RerankResultSchema,
             maxTokens: 4096,
+            preset: 'analysis_json',
+            operation: 'retrieval.rerank',
         });
 
         return normalizeResult(parsed, candidates);

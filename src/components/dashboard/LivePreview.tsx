@@ -1,5 +1,10 @@
 'use client';
 
+import { useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Laptop2, LoaderCircle, Smartphone, Sparkles } from 'lucide-react';
+import { cn } from '@/lib/utils';
+
 // LivePreview — Sandboxed iframe for rendering AI-generated HTML
 // Uses srcdoc to inject HTML directly, updates in real-time as content streams
 
@@ -10,33 +15,134 @@ interface LivePreviewProps {
 }
 
 export default function LivePreview({ html, isLoading = false, className = '' }: LivePreviewProps) {
-    if (!html && !isLoading) {
-        return null;
-    }
+    const shouldReduceMotion = useReducedMotion();
+    const [surfaceMode, setSurfaceMode] = useState<'desktop' | 'mobile'>(() => {
+        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches) {
+            return 'mobile';
+        }
+        return 'desktop';
+    });
 
     return (
-        <div className={`relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-white ${className}`}>
-            {isLoading && !html && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/95 text-sm text-slate-600">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
-                    <span>Building your product...</span>
+        <div
+            className={`relative h-full w-full overflow-hidden rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,1))] shadow-[0_32px_80px_-48px_rgba(15,23,42,0.35)] ${className}`}
+        >
+            <div className="flex items-center justify-between border-b border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur">
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-1 text-slate-700">
+                        <Laptop2 className="size-3.5" />
+                    </span>
+                    <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Product preview</p>
+                        <p className="text-sm font-medium text-slate-900">
+                            {surfaceMode === 'mobile' ? 'Phone-sized render' : html ? 'Live product render' : 'Draft canvas'}
+                        </p>
+                    </div>
                 </div>
-            )}
 
-            {isLoading && html && (
-                <div className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur">
-                    <div className="h-2 w-2 animate-pulse rounded-full bg-slate-500" />
-                    <span className="text-xs font-medium text-slate-600">Generating</span>
+                <div className="flex items-center gap-2">
+                    <div className="hidden items-center rounded-full border border-slate-200 bg-slate-100 p-1 sm:inline-flex">
+                        <button
+                            type="button"
+                            onClick={() => setSurfaceMode('desktop')}
+                            className={cn(
+                                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors',
+                                surfaceMode === 'desktop' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
+                            )}
+                        >
+                            <Laptop2 className="size-3.5" />
+                            Desktop
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSurfaceMode('mobile')}
+                            className={cn(
+                                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors',
+                                surfaceMode === 'mobile' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
+                            )}
+                        >
+                            <Smartphone className="size-3.5" />
+                            Mobile
+                        </button>
+                    </div>
+                    <span className="hidden rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:inline-flex">
+                        {surfaceMode === 'mobile' ? 'Mobile frame' : 'HTML render'}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        {isLoading ? 'Syncing' : html ? 'Ready' : 'Waiting'}
+                    </span>
                 </div>
-            )}
+            </div>
 
-            <iframe
-                srcDoc={html || '<!DOCTYPE html><html><body></body></html>'}
-                className="h-full w-full border-0"
-                sandbox="allow-scripts allow-same-origin"
-                title="Product Preview"
-                style={{ backgroundColor: '#fff' }}
-            />
+            <AnimatePresence initial={false}>
+                {isLoading && !html && (
+                    <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                        className="absolute inset-x-0 bottom-0 top-[61px] z-10 flex flex-col items-center justify-center gap-3 bg-white/92 text-sm text-slate-600 backdrop-blur-sm"
+                    >
+                        <LoaderCircle className="size-5 animate-spin text-slate-500" />
+                        <span>Building your product...</span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence initial={false}>
+                {isLoading && html && (
+                    <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={shouldReduceMotion ? undefined : { opacity: 0, y: -6 }}
+                        className="absolute right-4 top-20 z-10 flex items-center gap-2 rounded-full border border-sky-200 bg-white/95 px-3 py-1.5 shadow-sm backdrop-blur"
+                    >
+                        <div className="h-2 w-2 animate-pulse rounded-full bg-slate-500" />
+                        <span className="text-xs font-medium text-slate-600">Generating</span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <div className="h-[calc(100%-61px)] bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.10),transparent_30%),linear-gradient(180deg,rgba(241,245,249,1),rgba(255,255,255,1))] p-3">
+                {html ? (
+                    <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.985 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.3, ease: 'easeOut' }}
+                        className={cn(
+                            'mx-auto h-full overflow-hidden bg-white shadow-[0_28px_70px_-46px_rgba(15,23,42,0.4)] transition-[max-width,border-radius,border-width] duration-300',
+                            surfaceMode === 'mobile'
+                                ? 'max-w-[390px] rounded-[34px] border-[10px] border-slate-950'
+                                : 'max-w-full rounded-[24px] border border-slate-200/80'
+                        )}
+                    >
+                        <iframe
+                            srcDoc={html}
+                            className="h-full w-full border-0"
+                            sandbox="allow-scripts allow-same-origin"
+                            title="Product Preview"
+                            style={{ backgroundColor: '#fff' }}
+                        />
+                    </motion.div>
+                ) : (
+                    <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.34, ease: 'easeOut' }}
+                        className="flex h-full flex-col items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-white/85 px-6 text-center"
+                    >
+                        <span className="rounded-full border border-amber-200 bg-amber-50 p-3 text-amber-700">
+                            <Sparkles className="size-5" />
+                        </span>
+                        <h3 className="mt-4 text-lg font-semibold tracking-tight text-slate-950">
+                            Your product preview will appear here.
+                        </h3>
+                        <p className="mt-2 max-w-md text-sm leading-6 text-slate-600">
+                            Start with a format or describe the product you want. As Owny builds, the page will stream
+                            into this canvas in real time.
+                        </p>
+                    </motion.div>
+                )}
+            </div>
         </div>
     );
 }

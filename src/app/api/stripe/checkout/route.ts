@@ -2,11 +2,14 @@
 // PRD §8.6
 
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
 import { getStripe, calculateAppFee } from '@/lib/stripe';
 import { NextResponse } from 'next/server';
+import { getStripeCheckoutSetupMessage, hasUsableStripeSecretKey, isFakeStripeModeEnabled } from '@/lib/stripe-mode';
 
 export async function POST(request: Request) {
     const supabase = await createClient();
+    const adminSupabase = createAdminClient();
 
     const {
         data: { user },
@@ -19,16 +22,33 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'productId is required' }, { status: 400 });
     }
 
-    // Fetch product with creator's Stripe account
-    const { data: product } = await supabase
+    if (!user) {
+        return NextResponse.json(
+            { error: 'Sign in is required before unlocking or purchasing a product.' },
+            { status: 401 }
+        );
+    }
+
+    // Fetch the published product through the admin client after authenticating the buyer.
+    // Checkout should not depend on buyer-side RLS visibility for public product metadata.
+    const { data: product, error: productError } = await adminSupabase
         .from('products')
         .select(`
             id, slug, title, description, price_cents, currency, access_type, status,
-            creators(id, stripe_connect_account_id, stripe_connect_status, display_name)
+            creators!products_creator_id_fkey(id, stripe_connect_account_id, stripe_connect_status, display_name)
         `)
         .eq('id', productId)
         .eq('status', 'published')
         .single();
+
+    if (productError) {
+        console.error('[/api/stripe/checkout] product lookup failed', {
+            productId,
+            userId: user.id,
+            error: productError.message,
+        });
+        return NextResponse.json({ error: 'Unable to load product for checkout' }, { status: 500 });
+    }
 
     if (!product) {
         return NextResponse.json({ error: 'Product not found or not published' }, { status: 404 });
@@ -43,17 +63,32 @@ export async function POST(request: Request) {
 
     // Handle free / email-gated products
     if (product.access_type === 'public' || product.access_type === 'email_gated' || !product.price_cents) {
-        // For free products, create entitlement directly
-        if (user) {
-            await supabase.from('entitlements').upsert({
+        const { error: entitlementError } = await adminSupabase
+            .from('entitlements')
+            .upsert({
                 buyer_profile_id: user.id,
                 product_id: product.id,
                 status: 'active',
                 granted_via: 'purchase',
             }, { onConflict: 'buyer_profile_id,product_id' });
+
+        if (entitlementError) {
+            console.error('[/api/stripe/checkout] free entitlement grant failed', {
+                productId: product.id,
+                userId: user.id,
+                error: entitlementError.message,
+            });
+            return NextResponse.json({ error: 'Unable to unlock this product right now' }, { status: 500 });
         }
 
         return NextResponse.json({ free: true, productSlug: product.slug });
+    }
+
+    if (product.access_type === 'subscription') {
+        return NextResponse.json(
+            { error: 'Subscription checkout is not supported in the current purchase flow.' },
+            { status: 400 }
+        );
     }
 
     // Paid products require creator's Stripe Connect
@@ -64,17 +99,22 @@ export async function POST(request: Request) {
         );
     }
 
-    const stripe = getStripe();
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const appFee = calculateAppFee(product.price_cents);
+    const fakeStripeEnabled = isFakeStripeModeEnabled();
+
+    if (!fakeStripeEnabled && !hasUsableStripeSecretKey()) {
+        return NextResponse.json(
+            { error: getStripeCheckoutSetupMessage() },
+            { status: 503 }
+        );
+    }
 
     // Create a pending order
-    const { data: order } = await supabase
+    const { data: order, error: orderError } = await adminSupabase
         .from('orders')
         .insert({
-            buyer_profile_id: user?.id || null,
+            buyer_profile_id: user.id,
             product_id: product.id,
-            creator_id: creator.id,
             status: 'pending',
             amount_cents: product.price_cents,
             currency: product.currency || 'usd',
@@ -82,7 +122,39 @@ export async function POST(request: Request) {
         .select('id')
         .single();
 
+    if (orderError) {
+        console.error('[/api/stripe/checkout] order creation failed', {
+            productId: product.id,
+            userId: user.id,
+            error: orderError.message,
+        });
+        return NextResponse.json({ error: 'Unable to create checkout right now' }, { status: 500 });
+    }
+
+    if (fakeStripeEnabled) {
+        const fakeSessionId = `e2e_session_${crypto.randomUUID()}`;
+        const { error: fakeSessionError } = await adminSupabase
+            .from('orders')
+            .update({ stripe_checkout_session_id: fakeSessionId })
+            .eq('id', order.id);
+
+        if (fakeSessionError) {
+            console.error('[/api/stripe/checkout] fake session update failed', {
+                productId: product.id,
+                orderId: order.id,
+                error: fakeSessionError.message,
+            });
+            return NextResponse.json({ error: 'Unable to create checkout right now' }, { status: 500 });
+        }
+
+        return NextResponse.json({
+            url: `/checkout-success?session_id=${encodeURIComponent(fakeSessionId)}&simulate=1`,
+        });
+    }
+
     // Create Checkout Session
+    const stripe = getStripe();
+    const appFee = calculateAppFee(product.price_cents);
     const session = await stripe.checkout.sessions.create({
         mode: 'payment',
         line_items: [
@@ -109,14 +181,14 @@ export async function POST(request: Request) {
         metadata: {
             product_id: product.id,
             order_id: order?.id || '',
-            buyer_profile_id: user?.id || '',
+            buyer_profile_id: user.id,
         },
-        customer_email: user?.email || undefined,
+        customer_email: user.email || undefined,
     });
 
     // Update order with session ID
     if (order) {
-        await supabase
+        await adminSupabase
             .from('orders')
             .update({ stripe_checkout_session_id: session.id })
             .eq('id', order.id);

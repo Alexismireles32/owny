@@ -60,10 +60,11 @@ export async function POST(request: Request) {
     }
 
     try {
-        const [{ hybridSearch }, { rerankCandidates }, { generateBuildPacket }] = await Promise.all([
+        const [{ hybridSearch }, { rerankCandidates }, { generateBuildPacket }, { runIterativeRetrieval }] = await Promise.all([
             import('@/lib/indexing/search'),
             import('@/lib/ai/reranker'),
             import('@/lib/ai/planner'),
+            import('@/lib/ai/iterative-retrieval'),
         ]);
 
         // Step 1: Hybrid retrieval — search creator's content
@@ -78,16 +79,20 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Step 2: Rerank via Kimi K2.5
-        const reranked = await rerankCandidates(
-            searchResults.map((r) => ({
-                videoId: r.videoId,
-                title: r.title,
-                clipCard: r.clipCard,
-            })),
-            prompt,
-            productType
-        );
+        // Step 2: Iterative retrieval + reranking via Kimi K2.5
+        const retrievalResult = await runIterativeRetrieval({
+            initialQuery: prompt,
+            productType,
+            initialCandidates: searchResults,
+            searchLimit: 100,
+            maxCycles: 3,
+            targetSelectedVideos: 8,
+            search: (query, options) => hybridSearch(supabase, creator.id, query, {
+                limit: options?.limit ?? 100,
+            }),
+            rerank: rerankCandidates,
+        });
+        const reranked = retrievalResult.reranked;
 
         // Handle low confidence
         if (reranked.confidence === 'low') {
@@ -158,6 +163,8 @@ export async function POST(request: Request) {
                 coverageGaps: reranked.coverageGaps,
                 videosUsed: reranked.selectedVideos.length,
                 totalCandidates: searchResults.length,
+                retrievalCycles: retrievalResult.iterations.length,
+                executedQueries: retrievalResult.executedQueries,
             },
         });
     } catch (err) {

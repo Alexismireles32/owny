@@ -1,6 +1,6 @@
 // /c/[handle] — Creator Hub (public catalog page)
-// Fully branded with creator's brand_tokens from pipeline extraction
 
+import { ArrowRight, Sparkles, Star } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
@@ -33,13 +33,17 @@ const FONT_MAP: Record<string, string> = {
 };
 
 const RADIUS_MAP: Record<string, string> = {
-    sm: '8px',
-    md: '12px',
-    lg: '16px',
+    sm: '18px',
+    md: '24px',
+    lg: '30px',
     full: '9999px',
 };
 
-// --- Dynamic SEO metadata ---
+function withAlpha(color: string, alpha: number): string {
+    const percent = Math.max(0, Math.min(100, Math.round(alpha * 100)));
+    return `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const { handle } = await params;
     const supabase = await createClient();
@@ -66,10 +70,9 @@ export default async function CreatorHubPage({ params }: Props) {
     const { handle } = await params;
     const supabase = await createClient();
 
-    // Fetch creator by handle
     const { data: creator } = await supabase
         .from('creators')
-        .select('*, profiles(email)')
+        .select('id, handle, display_name, bio, avatar_url, featured_product_id, brand_tokens')
         .eq('handle', handle)
         .single();
 
@@ -77,10 +80,8 @@ export default async function CreatorHubPage({ params }: Props) {
         notFound();
     }
 
-    // Track page view (fire-and-forget)
     trackPageView({ path: `/c/${handle}`, creatorId: creator.id });
 
-    // Fetch published products
     const { data: products } = await supabase
         .from('products')
         .select('id, slug, type, title, description, price_cents, currency, access_type, published_at')
@@ -88,37 +89,40 @@ export default async function CreatorHubPage({ params }: Props) {
         .eq('status', 'published')
         .order('published_at', { ascending: false });
 
-    // Get featured product
     const featuredProduct = creator.featured_product_id
-        ? products?.find((p) => p.id === creator.featured_product_id)
-        : null;
+        ? products?.find((product) => product.id === creator.featured_product_id) || null
+        : products?.[0] || null;
+    const otherProducts = (products || []).filter((product) => product.id !== featuredProduct?.id);
 
-    const otherProducts = products?.filter((p) => p.id !== creator.featured_product_id) || [];
-
-    // Extract brand tokens with defaults
     const bt = (creator.brand_tokens || {}) as BrandTokens;
-    const primary = bt.primaryColor || '#6366f1';
-    const secondary = bt.secondaryColor || '#8b5cf6';
-    const bg = bt.backgroundColor || '#ffffff';
-    const text = bt.textColor || '#1f2937';
+    const primary = bt.primaryColor || '#2563eb';
+    const secondary = bt.secondaryColor || '#f97316';
+    const background = bt.backgroundColor || '#f8fafc';
+    const text = bt.textColor || '#0f172a';
     const fontFamily = FONT_MAP[bt.fontFamily || 'inter'] || FONT_MAP.inter;
     const radius = RADIUS_MAP[bt.borderRadius || 'md'] || RADIUS_MAP.md;
     const mood = bt.mood || 'clean';
-
-    // Mood-specific styles
-    const isDark = mood === 'premium' || bg.startsWith('#0') || bg.startsWith('#1');
-    const mutedText = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
-    const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.9)';
-    const cardBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
-    const heroGradient = isDark
-        ? `linear-gradient(135deg, ${primary}30 0%, ${secondary}15 50%, transparent 100%)`
-        : `linear-gradient(135deg, ${primary}15 0%, ${secondary}08 50%, transparent 100%)`;
+    const isDark = mood === 'premium' || background.includes('#0') || background.includes('#1');
+    const mutedText = withAlpha(text, isDark ? 0.7 : 0.62);
+    const surfaceBg = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.86)';
+    const surfaceBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.08)';
+    const pageBackground = `radial-gradient(circle at top left, ${withAlpha(primary, 0.16)}, transparent 32%), radial-gradient(circle at top right, ${withAlpha(secondary, 0.14)}, transparent 28%), linear-gradient(180deg, ${background} 0%, #ffffff 100%)`;
+    const heroGlow = `linear-gradient(135deg, ${withAlpha(primary, 0.18)} 0%, ${withAlpha(secondary, 0.12)} 56%, transparent 100%)`;
+    const productCount = products?.length || 0;
+    const lowestPriceCents = (products || [])
+        .map((product) => product.price_cents || 0)
+        .sort((a, b) => a - b)[0];
+    const heroPriceLabel = productCount > 0 ? formatPrice(lowestPriceCents, products?.[0]?.currency || 'usd') : 'Coming soon';
 
     const googleFontUrl = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(
-        bt.fontFamily === 'playfair' ? 'Playfair Display' :
-            bt.fontFamily === 'outfit' ? 'Outfit' :
-                bt.fontFamily === 'roboto' ? 'Roboto' : 'Inter'
-    )}:wght@400;500;600;700&display=swap`;
+        bt.fontFamily === 'playfair'
+            ? 'Playfair Display'
+            : bt.fontFamily === 'outfit'
+                ? 'Outfit'
+                : bt.fontFamily === 'roboto'
+                    ? 'Roboto'
+                    : 'Inter'
+    )}:wght@400;500;600;700;800&display=swap`;
 
     return (
         <>
@@ -126,182 +130,273 @@ export default async function CreatorHubPage({ params }: Props) {
             <div
                 className="min-h-screen"
                 style={{
-                    backgroundColor: bg,
+                    background: pageBackground,
                     color: text,
                     fontFamily,
                 }}
             >
-                {/* Creator header */}
-                <header
-                    className="relative py-20 px-4"
-                    style={{ background: heroGradient }}
-                >
-                    {/* Subtle pattern overlay for premium feel */}
-                    <div
-                        className="absolute inset-0 opacity-5"
-                        style={{
-                            backgroundImage: 'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)',
-                            backgroundSize: '32px 32px',
-                        }}
-                    />
-                    <div className="container mx-auto max-w-2xl text-center relative z-10">
-                        {creator.avatar_url && (
-                            <>
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                    src={creator.avatar_url}
-                                    alt={creator.display_name}
-                                    className="w-24 h-24 rounded-full mx-auto mb-5 border-4 shadow-xl object-cover"
-                                    style={{
-                                        borderColor: primary + '40',
-                                        boxShadow: `0 8px 32px ${primary}20`,
-                                    }}
-                                />
-                            </>
-                        )}
-                        <h1
-                            className="text-4xl font-bold tracking-tight"
-                            style={{ color: text }}
-                        >
-                            {creator.display_name}
-                        </h1>
-                        <p className="mt-2 text-lg" style={{ color: mutedText }}>
-                            @{creator.handle}
-                        </p>
-                        {creator.bio && (
-                            <p
-                                className="text-base mt-4 max-w-lg mx-auto leading-relaxed"
-                                style={{ color: mutedText }}
+                <header className="relative overflow-hidden border-b border-slate-200/70">
+                    <div className="absolute inset-0 opacity-80" style={{ background: heroGlow }} />
+                    <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)', backgroundSize: '28px 28px' }} />
+
+                    <div className="relative mx-auto max-w-6xl px-4 py-14 sm:px-6 sm:py-18">
+                        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
+                            <div>
+                                <Badge
+                                    variant="outline"
+                                    className="border-white/70 bg-white/70 text-[10px] uppercase tracking-[0.18em] text-slate-700"
+                                >
+                                    Creator Store
+                                </Badge>
+                                <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl" style={{ color: text }}>
+                                    Digital products from {creator.display_name}
+                                </h1>
+                                <p className="mt-3 text-base sm:text-lg" style={{ color: mutedText }}>
+                                    @{creator.handle}
+                                </p>
+                                {creator.bio && (
+                                    <p className="mt-5 max-w-2xl text-sm leading-7 sm:text-base" style={{ color: mutedText }}>
+                                        {creator.bio}
+                                    </p>
+                                )}
+
+                                <div className="mt-8 grid gap-3 sm:grid-cols-3">
+                                    <div
+                                        className="rounded-[26px] border px-4 py-4 shadow-[0_20px_50px_-42px_rgba(15,23,42,0.35)] backdrop-blur"
+                                        style={{ background: surfaceBg, borderColor: surfaceBorder, borderRadius: radius }}
+                                    >
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: mutedText }}>
+                                            Products
+                                        </p>
+                                        <p className="mt-2 text-3xl font-semibold tracking-tight">{productCount}</p>
+                                    </div>
+                                    <div
+                                        className="rounded-[26px] border px-4 py-4 shadow-[0_20px_50px_-42px_rgba(15,23,42,0.35)] backdrop-blur"
+                                        style={{ background: surfaceBg, borderColor: surfaceBorder, borderRadius: radius }}
+                                    >
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: mutedText }}>
+                                            Starts at
+                                        </p>
+                                        <p className="mt-2 text-3xl font-semibold tracking-tight">{heroPriceLabel}</p>
+                                    </div>
+                                    <div
+                                        className="rounded-[26px] border px-4 py-4 shadow-[0_20px_50px_-42px_rgba(15,23,42,0.35)] backdrop-blur"
+                                        style={{ background: surfaceBg, borderColor: surfaceBorder, borderRadius: radius }}
+                                    >
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: mutedText }}>
+                                            Featured
+                                        </p>
+                                        <p className="mt-2 text-lg font-semibold tracking-tight">
+                                            {featuredProduct ? formatProductType(featuredProduct.type) : 'Curating now'}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-8 flex flex-wrap items-center gap-3">
+                                    <ShareButton handle={creator.handle} primaryColor={primary} />
+                                    {featuredProduct && (
+                                        <Link
+                                            href={`/p/${featuredProduct.slug}`}
+                                            className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-transform duration-200 hover:-translate-y-0.5"
+                                            style={{
+                                                borderColor: withAlpha(primary, 0.22),
+                                                background: 'rgba(255,255,255,0.72)',
+                                                color: text,
+                                            }}
+                                        >
+                                            Explore featured
+                                            <ArrowRight className="size-4" />
+                                        </Link>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div
+                                className="rounded-[32px] border p-5 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.42)] backdrop-blur sm:p-6"
+                                style={{ background: surfaceBg, borderColor: surfaceBorder, borderRadius: radius }}
                             >
-                                {creator.bio}
-                            </p>
-                        )}
-                        <div className="mt-5">
-                            <ShareButton handle={creator.handle} primaryColor={primary} />
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: mutedText }}>
+                                            Store highlight
+                                        </p>
+                                        <h2 className="mt-3 text-2xl font-semibold tracking-tight">
+                                            {featuredProduct?.title || 'A premium creator catalog'}
+                                        </h2>
+                                        <p className="mt-3 text-sm leading-7" style={{ color: mutedText }}>
+                                            Buy from a storefront shaped around the creator&apos;s actual voice, content library, and offer structure.
+                                        </p>
+                                    </div>
+                                    <span
+                                        className="inline-flex size-12 items-center justify-center rounded-full text-white shadow-lg"
+                                        style={{ background: `linear-gradient(135deg, ${primary}, ${secondary})` }}
+                                    >
+                                        <Sparkles className="size-5" />
+                                    </span>
+                                </div>
+
+                                <div className="mt-6 space-y-3">
+                                    <div
+                                        className="rounded-[24px] border px-4 py-4"
+                                        style={{ borderColor: surfaceBorder, background: withAlpha(primary, 0.08) }}
+                                    >
+                                        <div className="flex items-center gap-2 text-sm font-medium">
+                                            <Star className="size-4" style={{ color: primary }} />
+                                            Best place to start
+                                        </div>
+                                        <p className="mt-2 text-sm leading-6" style={{ color: mutedText }}>
+                                            {featuredProduct
+                                                ? `${featuredProduct.title} is the lead offer in this store.`
+                                                : 'This creator is still assembling their lead offer.'}
+                                        </p>
+                                    </div>
+                                    <div
+                                        className="rounded-[24px] border px-4 py-4"
+                                        style={{ borderColor: surfaceBorder, background: withAlpha(secondary, 0.08) }}
+                                    >
+                                        <p className="text-sm font-medium">Instant access after checkout</p>
+                                        <p className="mt-2 text-sm leading-6" style={{ color: mutedText }}>
+                                            Buyers land in their library immediately after purchase, with a clean post-purchase path.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </header>
 
-                <main className="container mx-auto max-w-2xl px-4 py-10">
-                    {/* Featured product */}
+                <main className="mx-auto max-w-6xl px-4 pb-16 pt-10 sm:px-6 sm:pt-12">
                     {featuredProduct && (
-                        <div className="mb-10">
-                            <h2
-                                className="text-xs font-semibold uppercase tracking-widest mb-4"
-                                style={{ color: primary }}
-                            >
-                                ⭐ Featured
-                            </h2>
-                            <Link href={`/p/${featuredProduct.slug}`}>
-                                <div
-                                    className="p-6 transition-all duration-300 hover:scale-[1.01]"
+                        <section className="mb-12">
+                            <div className="mb-4 flex items-center gap-2">
+                                <span
+                                    className="inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]"
                                     style={{
-                                        background: cardBg,
-                                        border: `2px solid ${primary}30`,
-                                        borderRadius: radius,
-                                        boxShadow: `0 4px 24px ${primary}10`,
+                                        borderColor: withAlpha(primary, 0.22),
+                                        background: withAlpha(primary, 0.12),
+                                        color: primary,
                                     }}
-                                    onMouseEnter={undefined}
                                 >
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div className="flex-1">
-                                            <h3
-                                                className="text-xl font-bold"
-                                                style={{ color: text }}
+                                    Featured product
+                                </span>
+                            </div>
+
+                            <Link href={`/p/${featuredProduct.slug}`} className="block">
+                                <article
+                                    className="overflow-hidden rounded-[34px] border p-6 shadow-[0_28px_90px_-56px_rgba(15,23,42,0.35)] transition-transform duration-300 hover:-translate-y-1 sm:p-7"
+                                    style={{
+                                        background: surfaceBg,
+                                        borderColor: withAlpha(primary, 0.2),
+                                        borderRadius: radius,
+                                    }}
+                                >
+                                    <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+                                        <div>
+                                            <Badge
+                                                variant="outline"
+                                                className="border-none text-[10px] uppercase tracking-[0.16em]"
+                                                style={{
+                                                    background: withAlpha(primary, 0.12),
+                                                    color: primary,
+                                                }}
                                             >
+                                                {formatProductType(featuredProduct.type)}
+                                            </Badge>
+                                            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
                                                 {featuredProduct.title}
-                                            </h3>
+                                            </h2>
                                             {featuredProduct.description && (
-                                                <p
-                                                    className="text-sm mt-2 line-clamp-2 leading-relaxed"
-                                                    style={{ color: mutedText }}
-                                                >
+                                                <p className="mt-4 max-w-2xl text-sm leading-7 sm:text-base" style={{ color: mutedText }}>
                                                     {featuredProduct.description}
                                                 </p>
                                             )}
-                                            <div className="flex items-center gap-3 mt-4">
-                                                <Badge
-                                                    style={{
-                                                        backgroundColor: primary + '15',
-                                                        color: primary,
-                                                        border: `1px solid ${primary}25`,
-                                                    }}
-                                                >
-                                                    {formatProductType(featuredProduct.type)}
-                                                </Badge>
-                                                <span
-                                                    className="text-sm font-bold"
-                                                    style={{ color: primary }}
-                                                >
-                                                    {formatPrice(featuredProduct.price_cents, featuredProduct.currency)}
-                                                </span>
+                                        </div>
+
+                                        <div className="rounded-[28px] border bg-white/82 p-5 shadow-[0_24px_70px_-52px_rgba(15,23,42,0.3)]">
+                                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: mutedText }}>
+                                                Offer
+                                            </p>
+                                            <p className="mt-3 text-4xl font-semibold tracking-tight" style={{ color: text }}>
+                                                {formatPrice(featuredProduct.price_cents, featuredProduct.currency)}
+                                            </p>
+                                            <p className="mt-2 text-sm leading-6" style={{ color: mutedText }}>
+                                                {featuredProduct.access_type === 'email_gated'
+                                                    ? 'Email-gated access with instant delivery.'
+                                                    : 'Secure checkout and immediate library access.'}
+                                            </p>
+                                            <div className="mt-5 flex items-center gap-3">
                                                 <StorefrontBuyButton
                                                     productId={featuredProduct.id}
                                                     productSlug={featuredProduct.slug}
                                                     isFree={!featuredProduct.price_cents || featuredProduct.price_cents === 0}
                                                     primaryColor={primary}
                                                 />
+                                                <span className="text-sm font-medium" style={{ color: mutedText }}>
+                                                    Open product
+                                                </span>
                                             </div>
                                         </div>
-                                        <div
-                                            className="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold"
-                                            style={{ backgroundColor: primary }}
-                                        >
-                                            →
-                                        </div>
                                     </div>
-                                </div>
+                                </article>
                             </Link>
-                        </div>
+                        </section>
                     )}
 
-                    {/* Product grid */}
                     {otherProducts.length > 0 && (
-                        <div>
-                            <h2
-                                className="text-xs font-semibold uppercase tracking-widest mb-4"
-                                style={{ color: mutedText }}
-                            >
-                                Products
-                            </h2>
-                            <div className="grid gap-4 sm:grid-cols-2">
+                        <section>
+                            <div className="mb-5 flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: mutedText }}>
+                                        Browse the catalog
+                                    </p>
+                                    <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                                        More digital products
+                                    </h2>
+                                </div>
+                            </div>
+
+                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                                 {otherProducts.map((product) => (
-                                    <Link key={product.id} href={`/p/${product.slug}`}>
-                                        <div
-                                            className="p-5 h-full transition-all duration-200 hover:scale-[1.02]"
+                                    <Link key={product.id} href={`/p/${product.slug}`} className="block">
+                                        <article
+                                            className="flex h-full flex-col rounded-[30px] border p-5 shadow-[0_24px_70px_-56px_rgba(15,23,42,0.32)] transition-transform duration-300 hover:-translate-y-1"
                                             style={{
-                                                background: cardBg,
-                                                border: `1px solid ${cardBorder}`,
+                                                background: surfaceBg,
+                                                borderColor: surfaceBorder,
                                                 borderRadius: radius,
                                             }}
                                         >
-                                            <h3 className="font-semibold" style={{ color: text }}>
-                                                {product.title}
-                                            </h3>
-                                            {product.description && (
-                                                <p
-                                                    className="text-sm mt-1.5 line-clamp-2"
-                                                    style={{ color: mutedText }}
-                                                >
-                                                    {product.description}
-                                                </p>
-                                            )}
-                                            <div className="flex items-center gap-2 mt-3">
+                                            <div className="flex items-center justify-between gap-3">
                                                 <Badge
                                                     variant="outline"
+                                                    className="border-none text-[10px] uppercase tracking-[0.16em]"
                                                     style={{
-                                                        borderColor: cardBorder,
-                                                        color: mutedText,
+                                                        background: withAlpha(primary, 0.12),
+                                                        color: primary,
                                                     }}
                                                 >
                                                     {formatProductType(product.type)}
                                                 </Badge>
-                                                <span
-                                                    className="text-sm font-semibold"
-                                                    style={{ color: text }}
-                                                >
-                                                    {formatPrice(product.price_cents, product.currency)}
+                                                <span className="inline-flex size-9 items-center justify-center rounded-full border" style={{ borderColor: surfaceBorder, color: primary }}>
+                                                    <ArrowRight className="size-4" />
                                                 </span>
+                                            </div>
+
+                                            <h3 className="mt-4 text-xl font-semibold tracking-tight text-slate-950">
+                                                {product.title}
+                                            </h3>
+                                            {product.description && (
+                                                <p className="mt-3 flex-1 text-sm leading-7" style={{ color: mutedText }}>
+                                                    {product.description}
+                                                </p>
+                                            )}
+                                            <div className="mt-5 flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: mutedText }}>
+                                                        Price
+                                                    </p>
+                                                    <p className="mt-1 text-lg font-semibold">{formatPrice(product.price_cents, product.currency)}</p>
+                                                </div>
                                             </div>
                                             <StorefrontBuyButton
                                                 productId={product.id}
@@ -310,19 +405,23 @@ export default async function CreatorHubPage({ params }: Props) {
                                                 primaryColor={primary}
                                                 fullWidth
                                             />
-                                        </div>
+                                        </article>
                                     </Link>
                                 ))}
                             </div>
-                        </div>
+                        </section>
                     )}
 
                     {(!products || products.length === 0) && (
-                        <div className="text-center py-16">
-                            <p className="text-lg" style={{ color: mutedText }}>
-                                No products available yet. Check back soon!
+                        <section
+                            className="rounded-[32px] border px-6 py-16 text-center shadow-[0_24px_70px_-56px_rgba(15,23,42,0.3)]"
+                            style={{ background: surfaceBg, borderColor: surfaceBorder, borderRadius: radius }}
+                        >
+                            <p className="text-lg font-medium text-slate-950">No products available yet.</p>
+                            <p className="mt-2 text-sm" style={{ color: mutedText }}>
+                                This creator is still shaping the first offer. Check back soon.
                             </p>
-                        </div>
+                        </section>
                     )}
                 </main>
 
@@ -344,9 +443,8 @@ function formatProductType(type: string): string {
 
 function formatPrice(cents: number | null, currency: string): string {
     if (!cents || cents === 0) return 'Free';
-    const amount = cents / 100;
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: currency || 'usd',
-    }).format(amount);
+    }).format(cents / 100);
 }

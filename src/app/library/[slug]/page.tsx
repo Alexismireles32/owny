@@ -22,7 +22,7 @@ export default async function ContentViewerPage({ params }: Props) {
         data: { user },
     } = await supabase.auth.getUser();
 
-    if (!user) redirect('/sign-in');
+    if (!user) redirect(`/sign-in?next=${encodeURIComponent(`/library/${slug}`)}`);
 
     // Fetch product
     const { data: product } = await supabase
@@ -30,7 +30,7 @@ export default async function ContentViewerPage({ params }: Props) {
         .select(`
             id, slug, type, title, description, status,
             active_version_id,
-            creators(handle, display_name, avatar_url, brand_tokens)
+            creators!products_creator_id_fkey(handle, display_name, avatar_url, brand_tokens)
         `)
         .eq('slug', slug)
         .single();

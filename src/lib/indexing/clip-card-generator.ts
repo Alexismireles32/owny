@@ -66,6 +66,8 @@ export async function generateClipCard(
         userPrompt: userMessage,
         schema: ClipCardSchema,
         maxTokens: 2048,
+        preset: 'strict_json',
+        operation: 'index.clip_card',
     });
 
     // Validate required fields

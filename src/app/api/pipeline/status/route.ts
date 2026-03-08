@@ -13,7 +13,7 @@ import { startDispatchFallbackWatchdog } from '@/lib/inngest/dispatch-fallback';
 import { kickPipelineQueueProcessor } from '@/lib/pipeline/queue';
 
 const RUNNING_STATES = new Set(['scraping', 'transcribing', 'indexing', 'cleaning', 'clustering', 'extracting']);
-const STALE_PIPELINE_MS = 2 * 60 * 1000;
+const STALE_PIPELINE_MS = 8 * 60 * 1000;
 const QUEUE_ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 const AUTO_RETRY_MARKER = 'Auto-retry enqueued at ';
 

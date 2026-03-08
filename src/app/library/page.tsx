@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { getApiErrorMessage, isAuthStatus, readJsonSafe } from '@/lib/utils';
 
@@ -109,9 +109,9 @@ export default function LibraryPage() {
                                 <CardHeader className="pb-2">
                                     <div className="flex items-start justify-between">
                                         <div>
-                                            <CardTitle className="text-lg">
+                                            <h2 className="text-lg font-semibold leading-none tracking-tight">
                                                 {item.products.title}
-                                            </CardTitle>
+                                            </h2>
                                             <p className="text-sm text-muted-foreground mt-1">
                                                 by {item.products.creators.display_name}
                                             </p>
