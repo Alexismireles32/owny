@@ -55,11 +55,12 @@ export function DashboardOrdersView({ creatorId }: DashboardOrdersViewProps) {
     }, [creatorId]);
 
     return (
-        <div className="h-full min-h-0 overflow-y-auto p-4 sm:p-6">
-            <div className="mx-auto w-full max-w-4xl space-y-6">
-                <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-slate-900">Orders</h1>
-                    <p className="mt-1 text-sm text-slate-500">View your recent customer purchases.</p>
+        <div className="h-full min-h-0 overflow-y-auto bg-transparent relative p-4 sm:p-8">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-[500px] bg-[radial-gradient(ellipse_100%_100%_at_50%_-20%,rgba(99,102,241,0.08),transparent)]" />
+            <div className="mx-auto w-full max-w-4xl space-y-8 relative z-10">
+                <div className="mb-8">
+                    <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">Orders</h1>
+                    <p className="mt-2 text-sm text-slate-500">View your recent customer purchases.</p>
                 </div>
 
                 <Card>

@@ -73,183 +73,176 @@ export function DashboardBuildView({ creatorId, displayName, initialProducts }: 
     const draftCount = useMemo(() => products.filter((product) => product.status !== 'published').length, [products]);
 
     return (
-        <div className="h-full min-h-0 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#fff7ed_28%,#ffffff_100%)]">
-            <div className="mx-auto w-full max-w-[1380px] space-y-5 p-3 sm:p-5">
-                <section className="relative overflow-hidden rounded-[32px] border border-orange-200/70 bg-gradient-to-br from-amber-50 via-orange-50 to-rose-100 p-4 sm:p-6">
-                    <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-orange-300/35 blur-3xl" />
-                    <div className="pointer-events-none absolute -left-20 bottom-0 h-56 w-56 rounded-full bg-amber-300/30 blur-3xl" />
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.72),transparent_60%)]" />
-
-                    <div className="relative z-10 space-y-5">
-                        <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
-                            <motion.div
-                                initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.4, ease: 'easeOut' }}
+        <div className="h-full min-h-0 overflow-y-auto bg-transparent relative">
+            {/* Subtle mesh/glow background */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-[600px] bg-[radial-gradient(ellipse_100%_100%_at_50%_-20%,rgba(120,119,198,0.12),transparent)]" />
+            
+            <div className="mx-auto w-full max-w-[1240px] space-y-8 p-4 sm:p-8 relative z-10">
+                <section className="space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+                        <motion.div
+                            initial={shouldReduceMotion ? false : { opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.4, ease: 'easeOut' }}
+                            className="max-w-2xl"
+                        >
+                            <Badge
+                                variant="outline"
+                                className="border-slate-200/80 bg-white/60 shadow-sm text-[10px] uppercase tracking-[0.16em] text-slate-600 mb-4 px-2.5 py-0.5 backdrop-blur-sm"
                             >
-                                <Badge
-                                    variant="outline"
-                                    className="border-orange-200 bg-white/70 text-[10px] uppercase tracking-[0.16em] text-orange-900"
-                                >
-                                    Owny Studio
-                                </Badge>
-                                <h1 className="mt-3 max-w-3xl text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl lg:text-[2.9rem]">
-                                    Build a premium digital product from your creator catalog.
-                                </h1>
-                                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-700 sm:text-base">
-                                    The goal is not just to generate a page. It is to turn your videos, transcripts,
-                                    and brand DNA into an offer that looks premium, feels on-brand, and can actually sell.
-                                </p>
+                                Creation Hub
+                            </Badge>
+                            <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl lg:text-[2.5rem] leading-tight">
+                                Build premium products <br className="hidden sm:block" />
+                                <span className="text-slate-500">from your creator catalog.</span>
+                            </h1>
+                        </motion.div>
+
+                        <div className="flex flex-wrap gap-3">
+                            <motion.div
+                                initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.3, delay: 0.05, ease: 'easeOut' }}
+                                className="flex items-center gap-3 rounded-xl border border-slate-200/60 bg-white/60 px-4 py-2.5 shadow-sm backdrop-blur-md"
+                            >
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100/80 text-slate-600">
+                                    <Layers3 className="size-4" />
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Projects</p>
+                                    <p className="text-sm font-semibold text-slate-900 leading-none mt-0.5">{products.length}</p>
+                                </div>
                             </motion.div>
-
-                            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                                <motion.div
-                                    initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.32, delay: 0.05, ease: 'easeOut' }}
-                                    className="rounded-[28px] border border-white/80 bg-white/75 p-4 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.3)] backdrop-blur"
-                                >
-                                    <div className="flex items-center gap-2 text-slate-900">
-                                        <Layers3 className="size-4" />
-                                        <span className="text-sm font-medium">Projects</span>
-                                    </div>
-                                    <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">{products.length}</p>
-                                    <p className="mt-1 text-xs leading-5 text-slate-600">Active drafts and published products.</p>
-                                </motion.div>
-                                <motion.div
-                                    initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.32, delay: 0.1, ease: 'easeOut' }}
-                                    className="rounded-[28px] border border-white/80 bg-white/75 p-4 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.3)] backdrop-blur"
-                                >
-                                    <div className="flex items-center gap-2 text-slate-900">
-                                        <Rocket className="size-4" />
-                                        <span className="text-sm font-medium">Published</span>
-                                    </div>
-                                    <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">{publishedCount}</p>
-                                    <p className="mt-1 text-xs leading-5 text-slate-600">Products already live on your storefront.</p>
-                                </motion.div>
-                                <motion.div
-                                    initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.32, delay: 0.15, ease: 'easeOut' }}
-                                    className="rounded-[28px] border border-white/80 bg-white/75 p-4 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.3)] backdrop-blur"
-                                >
-                                    <div className="flex items-center gap-2 text-slate-900">
-                                        <Clock3 className="size-4" />
-                                        <span className="text-sm font-medium">In progress</span>
-                                    </div>
-                                    <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">{draftCount}</p>
-                                    <p className="mt-1 text-xs leading-5 text-slate-600">Drafts waiting for another round of polish.</p>
-                                </motion.div>
-                            </div>
+                            <motion.div
+                                initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.3, delay: 0.1, ease: 'easeOut' }}
+                                className="flex items-center gap-3 rounded-xl border border-slate-200/60 bg-white/60 px-4 py-2.5 shadow-sm backdrop-blur-md"
+                            >
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100/50">
+                                    <Rocket className="size-4" />
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Published</p>
+                                    <p className="text-sm font-semibold text-slate-900 leading-none mt-0.5">{publishedCount}</p>
+                                </div>
+                            </motion.div>
+                            <motion.div
+                                initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.3, delay: 0.15, ease: 'easeOut' }}
+                                className="flex items-center gap-3 rounded-xl border border-slate-200/60 bg-white/60 px-4 py-2.5 shadow-sm backdrop-blur-md"
+                            >
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600 border border-amber-100/50">
+                                    <Clock3 className="size-4" />
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Drafts</p>
+                                    <p className="text-sm font-semibold text-slate-900 leading-none mt-0.5">{draftCount}</p>
+                                </div>
+                            </motion.div>
                         </div>
+                    </div>
 
-                        <div className="overflow-hidden rounded-[32px] border border-white/80 bg-white/88 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.45)] backdrop-blur">
-                            <div className="h-[78vh] min-h-[720px] sm:h-[74vh] sm:min-h-[680px] lg:h-[70vh] lg:min-h-[560px]">
-                                <ProductBuilder
-                                    creatorId={creatorId}
-                                    displayName={displayName}
-                                    onProductCreated={handleProductCreated}
-                                />
-                            </div>
+                    <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 ring-slate-900/5 transition-all">
+                        <div className="h-[70vh] min-h-[600px] lg:h-[65vh] lg:min-h-[500px]">
+                            <ProductBuilder
+                                creatorId={creatorId}
+                                displayName={displayName}
+                                onProductCreated={handleProductCreated}
+                            />
                         </div>
                     </div>
                 </section>
 
-                <section className="rounded-[30px] border border-slate-200/80 bg-white/92 p-4 shadow-[0_24px_70px_-52px_rgba(15,23,42,0.38)] backdrop-blur sm:p-5">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 p-1 text-amber-700">
-                                    <Sparkles className="size-3.5" />
-                                </span>
-                                <h2 className="text-lg font-semibold tracking-tight text-slate-900">Recent Projects</h2>
-                            </div>
-                            <p className="mt-1 text-sm text-slate-500">Drafts, published products, and the latest build quality signals.</p>
+                <section className="space-y-4 pt-4">
+                    <div className="flex items-center justify-between gap-3 px-1">
+                        <div className="flex items-center gap-2 text-slate-900">
+                            <Sparkles className="size-4 text-violet-500" />
+                            <h2 className="text-sm font-medium tracking-tight">Recent Projects</h2>
                         </div>
-                        <Button type="button" size="sm" variant="outline" onClick={() => void refreshProducts()}>
+                        <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs text-slate-500 hover:text-slate-900 hover:bg-white/60" onClick={() => void refreshProducts()}>
                             Refresh
                         </Button>
                     </div>
 
                     {productsError && (
-                        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                        <div className="rounded-xl border border-red-200 bg-red-50/50 px-3 py-2 text-xs text-red-600">
                             {productsError}
                         </div>
                     )}
 
                     {recentProjects.length === 0 ? (
-                        <Card className="border-dashed py-0 shadow-none">
-                            <CardContent className="px-5 py-10 text-center">
-                                <p className="text-base font-semibold text-slate-900">No projects yet</p>
-                                <p className="mt-1 text-sm text-slate-500">
+                        <Card className="border-dashed bg-transparent border-slate-300/60 shadow-none rounded-xl">
+                            <CardContent className="px-5 py-8 text-center">
+                                <p className="text-sm font-medium text-slate-900">No projects yet</p>
+                                <p className="mt-1 text-xs text-slate-500">
                                     Your first generated product will appear here.
                                 </p>
                             </CardContent>
                         </Card>
                     ) : (
-                        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
                             {recentProjects.map((product) => (
                                 <motion.div
                                     key={product.id}
-                                    initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                    initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
+                                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' }}
+                                    className="group"
                                 >
-                                    <Card className="overflow-hidden border-slate-200/80 py-0 shadow-[0_20px_55px_-44px_rgba(15,23,42,0.35)] transition-transform duration-200 hover:-translate-y-0.5">
-                                        <CardContent className="flex items-center justify-between gap-3 px-4 py-4">
-                                        <div className="min-w-0">
-                                            <p className="truncate text-sm font-semibold text-slate-950">{product.title}</p>
-                                            <p className="mt-1 truncate text-xs text-slate-500">
-                                                {TYPE_LABELS[product.type] || product.type} · {formatCreatedDate(product.created_at)}
-                                            </p>
-                                            {(() => {
-                                                const buildMetadata = parseBuildMetadata(product.active_build_packet || null);
-                                                if (!buildMetadata) return null;
-                                                const modeLabel = formatBuildModeLabel(buildMetadata.htmlBuildMode);
-                                                const timingLabel = formatStageTimingSummary(buildMetadata.stageTimingsMs);
-                                                return (
-                                                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                                        {modeLabel && (
-                                                            <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em]">
-                                                                {modeLabel}
-                                                            </Badge>
-                                                        )}
-                                                        {typeof product.active_version_number === 'number' && (
-                                                            <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em]">
-                                                                v{product.active_version_number}
-                                                            </Badge>
-                                                        )}
-                                                        {typeof buildMetadata.qualityOverallScore === 'number' && (
-                                                            <Badge
-                                                                variant={buildMetadata.qualityOverallPassed ? 'secondary' : 'outline'}
-                                                                className="text-[10px] uppercase tracking-[0.08em]"
-                                                            >
-                                                                Q{buildMetadata.qualityOverallScore}
-                                                            </Badge>
-                                                        )}
-                                                        {timingLabel && (
-                                                            <span className="text-[11px] text-slate-500">{timingLabel}</span>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })()}
+                                    <a
+                                        href={`/products/${product.id}/builder`}
+                                        className="relative flex h-full flex-col justify-between overflow-hidden rounded-xl border border-slate-200/60 bg-white/80 p-4 shadow-sm backdrop-blur-sm transition-all hover:bg-white hover:shadow-md hover:border-slate-300 ring-1 ring-transparent hover:ring-slate-900/5 group-hover:-translate-y-0.5"
+                                    >
+                                        <div>
+                                            <div className="flex items-start justify-between gap-3 mb-1">
+                                                <Badge
+                                                    variant={product.status === 'published' ? 'secondary' : 'outline'}
+                                                    className="shrink-0 text-[9px] uppercase tracking-[0.1em] font-medium bg-transparent border-slate-200 text-slate-500"
+                                                >
+                                                    {product.status}
+                                                </Badge>
+                                            </div>
+                                            <div className="mt-2 min-w-0">
+                                                <p className="truncate text-sm font-medium text-slate-900 group-hover:text-violet-600 transition-colors">{product.title}</p>
+                                                <p className="mt-1 text-xs text-slate-500 flex items-center gap-1.5">
+                                                    <span>{TYPE_LABELS[product.type] || product.type}</span>
+                                                    <span className="h-1 w-1 rounded-full bg-slate-300"></span>
+                                                    <span>{formatCreatedDate(product.created_at)}</span>
+                                                </p>
+                                            </div>
                                         </div>
 
-                                        <div className="flex shrink-0 items-center gap-2">
-                                            <Badge
-                                                variant={product.status === 'published' ? 'secondary' : 'outline'}
-                                                className="text-[10px] uppercase tracking-[0.08em]"
-                                            >
-                                                {product.status}
-                                            </Badge>
-                                            <Button asChild size="xs" variant="outline">
-                                                <a href={`/products/${product.id}/builder`}>Open</a>
-                                            </Button>
-                                        </div>
-                                        </CardContent>
-                                    </Card>
+                                        {(() => {
+                                            const buildMetadata = parseBuildMetadata(product.active_build_packet || null);
+                                            if (!buildMetadata) return null;
+                                            const modeLabel = formatBuildModeLabel(buildMetadata.htmlBuildMode);
+                                            const timingLabel = formatStageTimingSummary(buildMetadata.stageTimingsMs);
+                                            return (
+                                                <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+                                                    {modeLabel && (
+                                                        <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200/50">
+                                                            {modeLabel}
+                                                        </span>
+                                                    )}
+                                                    {typeof product.active_version_number === 'number' && (
+                                                        <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200/50">
+                                                            v{product.active_version_number}
+                                                        </span>
+                                                    )}
+                                                    {typeof buildMetadata.qualityOverallScore === 'number' && (
+                                                        <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${buildMetadata.qualityOverallPassed ? 'bg-emerald-50 text-emerald-700 ring-emerald-200/50' : 'bg-slate-50 text-slate-600 ring-slate-200/50'}`}>
+                                                            Q{buildMetadata.qualityOverallScore}
+                                                        </span>
+                                                    )}
+                                                    {timingLabel && (
+                                                        <span className="text-[10px] text-slate-400 ml-auto">{timingLabel}</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </a>
                                 </motion.div>
                             ))}
                         </div>
