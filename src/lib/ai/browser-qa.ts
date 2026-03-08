@@ -217,7 +217,21 @@ export async function runProductBrowserQa(input: BrowserQaInput): Promise<Browse
         };
     }
 
-    const browser = await playwright.chromium.launch({ headless: true });
+    let browser;
+    try {
+        browser = await playwright.chromium.launch({ headless: true });
+    } catch (error) {
+        // Browser binary not installed (common in serverless environments)
+        return {
+            attempted: false,
+            skipped: true,
+            passed: true,
+            score: null,
+            issues: ['Playwright browser binary is not available — skipping browser QA.'],
+            viewports: [],
+            error: error instanceof Error ? error.message : 'Failed to launch browser',
+        };
+    }
 
     try {
         const viewports: BrowserQaViewportResult[] = [];
