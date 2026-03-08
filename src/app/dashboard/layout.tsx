@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DashboardSidebarNav } from '@/components/dashboard/DashboardSidebarNav';
+import { MobileBottomNav } from '@/components/dashboard/MobileBottomNav';
 import { getDashboardContext } from './_lib/get-dashboard-context';
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
@@ -15,7 +16,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                     <div className="flex items-center gap-3">
                         <span className="hidden text-sm text-slate-500 sm:inline">{creator.display_name}</span>
                         <form action="/api/auth/signout" method="POST">
-                            <Button type="submit" size="sm" variant="outline">
+                            <Button type="submit" size="sm" variant="outline" className="hidden sm:inline-flex">
                                 Sign out
                             </Button>
                         </form>
@@ -34,7 +35,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                 </div>
             )}
 
-            <div className="min-h-0 flex-1 p-2 sm:p-3">
+            <div className="min-h-0 flex-1 p-2 pb-16 sm:p-3 sm:pb-3">
                 <div className="mx-auto flex h-full w-full max-w-[1600px] gap-2">
                     <DashboardSidebarNav
                         displayName={creator.display_name}
@@ -46,6 +47,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                     </main>
                 </div>
             </div>
+
+            <MobileBottomNav />
         </div>
     );
 }
+

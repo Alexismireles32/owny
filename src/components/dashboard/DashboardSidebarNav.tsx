@@ -11,9 +11,15 @@ interface DashboardSidebarNavProps {
     avatarUrl: string | null;
 }
 
-const NAV_ITEMS = [
+const PRIMARY_NAV = [
     { href: '/dashboard', label: 'Build', short: 'B' },
     { href: '/dashboard/storefront', label: 'Storefront', short: 'S' },
+];
+
+const SECONDARY_NAV = [
+    { href: '/dashboard/analytics', label: 'Analytics', short: 'A' },
+    { href: '/dashboard/orders', label: 'Orders', short: 'O' },
+    { href: '/dashboard/settings', label: 'Settings', short: '⚙' },
 ];
 
 function initialsFromName(name: string): string {
@@ -27,35 +33,43 @@ export function DashboardSidebarNav({ displayName, handle, avatarUrl }: Dashboar
     const pathname = usePathname();
     const initials = initialsFromName(displayName);
 
+    function renderNavItem(item: { href: string; label: string; short: string }) {
+        const active = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
+        const exactDashboard = item.href === '/dashboard' && pathname === '/dashboard';
+        const isActive = active || exactDashboard;
+        return (
+            <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                    'flex h-10 items-center gap-2 rounded-md px-2 text-xs text-slate-600 transition-colors sm:px-3 sm:text-sm',
+                    isActive ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 hover:text-slate-900'
+                )}
+            >
+                <span
+                    className={cn(
+                        'inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold',
+                        isActive ? 'border-white/30 text-white' : 'border-slate-300 text-slate-500'
+                    )}
+                >
+                    {item.short}
+                </span>
+                <span className="hidden sm:inline">{item.label}</span>
+            </Link>
+        );
+    }
+
     return (
-        <aside className="w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white sm:w-56">
+        <aside className="hidden w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white sm:block sm:w-56">
             <div className="flex h-full min-h-0 flex-col p-2 sm:p-3">
                 <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 sm:px-2">Studio</p>
 
                 <nav className="mt-2 flex flex-1 flex-col gap-1">
-                    {NAV_ITEMS.map((item) => {
-                        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                        return (
-                            <Link
-                                key={item.href}
-                                href={item.href}
-                                className={cn(
-                                    'flex h-10 items-center gap-2 rounded-md px-2 text-xs text-slate-600 transition-colors sm:px-3 sm:text-sm',
-                                    active ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 hover:text-slate-900'
-                                )}
-                            >
-                                <span
-                                    className={cn(
-                                        'inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold',
-                                        active ? 'border-white/30 text-white' : 'border-slate-300 text-slate-500'
-                                    )}
-                                >
-                                    {item.short}
-                                </span>
-                                <span className="hidden sm:inline">{item.label}</span>
-                            </Link>
-                        );
-                    })}
+                    {PRIMARY_NAV.map(renderNavItem)}
+
+                    <div className="my-2 h-px bg-slate-100" />
+
+                    {SECONDARY_NAV.map(renderNavItem)}
                 </nav>
 
                 <Link

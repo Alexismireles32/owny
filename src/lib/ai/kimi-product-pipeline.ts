@@ -143,33 +143,33 @@ function sectionCountTarget(productType: ProductType): number {
 function productScaffoldGuidance(productType: ProductType): string {
     switch (productType) {
         case 'pdf_guide':
-            return 'The finished product should read like a premium guide with a table of contents, chapter rhythm, and calm editorial pacing.';
+            return 'The finished product should read like a premium downloadable guide with a table of contents, chapter rhythm, and calm editorial pacing. Each chapter should contain multiple paragraphs of substantive teaching, concrete examples, and actionable takeaways drawn from the creator\'s real expertise.';
         case 'mini_course':
-            return 'The finished product should feel like a premium mini-course with module navigation, lesson pacing, and clear action steps.';
+            return 'The finished product should feel like a premium mini-course with module navigation, lesson pacing, and clear action steps. Each module should include an introduction, 2-3 in-depth teaching blocks with examples, practice exercises, and a summary.';
         case 'challenge_7day':
-            return 'The finished product should feel like a 7-day guided challenge with day navigation, progressive tasks, and momentum.';
+            return 'The finished product should feel like a 7-day guided challenge with day navigation, progressive difficulty, and momentum. Each day should include context-setting, detailed instructions, creator tips from real experience, and a clear action step with expected outcomes.';
         case 'checklist_toolkit':
-            return 'The finished product should feel like a premium checklist toolkit with categories, scannable execution steps, and progress logic.';
+            return 'The finished product should feel like a premium checklist toolkit with categories, scannable execution steps, context-rich explanations, and progress logic. Each category should have a grounding paragraph explaining the rationale, followed by checklist items with detailed one-to-two sentence explanations.';
         default:
-            return 'The finished product should feel like a premium creator product.';
+            return 'The finished product should feel like a premium creator product with substantial, actionable content.';
     }
 }
 
 function sectionFormatGuidance(productType: ProductType): string {
     switch (productType) {
         case 'checklist_toolkit':
-            return 'Build the section with a short grounding paragraph, a checklist of 4-6 concrete items with one-sentence explanations, and a closing takeaway. Each item must be rendered as a clickable checklist row using real checkbox controls or an equivalent accessible toggle pattern.';
+            return 'Build the section with a grounding paragraph (3-4 sentences explaining WHY this category matters), then a checklist of 5-8 concrete items. Each item must have a one-to-two sentence explanation grounded in real creator insights. End with a closing takeaway paragraph. Each item must be rendered as a clickable checklist row using real checkbox controls or an equivalent accessible toggle pattern. Aim for 350+ words.';
         case 'mini_course':
-            return 'Build the section with a concise lesson intro, 2-3 teaching blocks, and a practical action step.';
+            return 'Build the section with a lesson introduction (2-3 paragraphs setting context), then 2-3 teaching blocks each with a subheading, 2-3 paragraphs of concrete instruction, a real example or case study from the creator\'s experience, and a practical action step. End with a key takeaway summary. Aim for 400+ words.';
         case 'challenge_7day':
-            return 'Build the section with a day intention, 2-4 concrete steps, and a short completion reflection.';
+            return 'Build the section with a day intention paragraph (2-3 sentences on what will be accomplished), then 3-5 concrete steps with detailed instructions (each step gets 2-3 sentences of real guidance), a creator tip or insight block, and a completion reflection that ties progress back to the overall challenge goal. Aim for 400+ words.';
         case 'pdf_guide':
         default:
-            return 'Build the section with a thoughtful intro, a few concrete teaching blocks, and a clear takeaway.';
+            return 'Build the section with a thoughtful introduction (2-3 paragraphs), 2-4 concrete teaching blocks each containing a subheading and 2-3 paragraphs of substantive instruction with specific examples from the creator\'s content, and a clear actionable takeaway. Include callout boxes or highlighted tips where appropriate. Aim for 450+ words.';
     }
 }
 
-function compactContext(contexts: KimiPipelineContext[], limit = 8, maxChars = 1200): string {
+function compactContext(contexts: KimiPipelineContext[], limit = 8, maxChars = 1800): string {
     return contexts
         .slice(0, limit)
         .map((row, index) => [
@@ -373,7 +373,7 @@ function normalizeArchitectPlan(
         sourceVideoIds: [row.videoId],
         layoutHint: '',
         requiredElements: [],
-        wordTarget: 180,
+        wordTarget: 450,
     }))).slice(0, count);
     const usedVideoIds = new Set(baseSections.flatMap((section) => section.sourceVideoIds));
     const fallbackSections = contexts
@@ -386,7 +386,7 @@ function normalizeArchitectPlan(
             sourceVideoIds: [row.videoId],
             layoutHint: '',
             requiredElements: ['grounded teaching', 'concrete takeaway'],
-            wordTarget: productType === 'checklist_toolkit' ? 170 : 190,
+            wordTarget: productType === 'checklist_toolkit' ? 350 : 420,
         }));
 
     const sections = [...baseSections, ...fallbackSections]
@@ -401,7 +401,7 @@ function normalizeArchitectPlan(
                 sourceVideoIds: validSourceVideoIds.length > 0 ? validSourceVideoIds : fallbackSourceIds,
                 layoutHint: section.layoutHint?.trim() || 'Use a premium shadcn-style section card.',
                 requiredElements: section.requiredElements.length > 0 ? section.requiredElements : ['grounded teaching', 'clear hierarchy'],
-                wordTarget: Math.max(140, Math.min(500, section.wordTarget || (productType === 'checklist_toolkit' ? 170 : 180))),
+                wordTarget: Math.max(300, Math.min(600, section.wordTarget || (productType === 'checklist_toolkit' ? 350 : 450))),
             };
         });
 
@@ -423,26 +423,26 @@ function normalizeArchitectPlan(
 }
 
 function evidenceForSection(section: ArchitectSection, contexts: KimiPipelineContext[]): string {
-    const matches = contexts.filter((row) => section.sourceVideoIds.includes(row.videoId)).slice(0, 2);
-    return compactContext(matches.length > 0 ? matches : contexts.slice(0, 2), 2, 420);
+    const matches = contexts.filter((row) => section.sourceVideoIds.includes(row.videoId)).slice(0, 3);
+    return compactContext(matches.length > 0 ? matches : contexts.slice(0, 2), 3, 800);
 }
 
 function estimateSectionCompletionMaxTokens(input: {
     sections: number;
     totalWordTarget: number;
 }): number {
-    const baseEstimate = Math.ceil((input.totalWordTarget * 1.85) + (input.sections * 260));
-    return Math.max(2600, Math.min(7600, baseEstimate));
+    const baseEstimate = Math.ceil((input.totalWordTarget * 2.2) + (input.sections * 400));
+    return Math.max(4000, Math.min(16000, baseEstimate));
 }
 
 function estimateSingleSectionMaxTokens(input: {
     productType: ProductType;
     wordTarget: number;
 }): number {
-    const multiplier = input.productType === 'checklist_toolkit' ? 5.8 : 5.1;
-    const baseEstimate = Math.ceil((input.wordTarget * multiplier) + 220);
-    const ceiling = input.productType === 'checklist_toolkit' ? 1500 : 1325;
-    return Math.max(850, Math.min(ceiling, baseEstimate));
+    const multiplier = input.productType === 'checklist_toolkit' ? 5.2 : 4.5;
+    const baseEstimate = Math.ceil((input.wordTarget * multiplier) + 320);
+    const ceiling = input.productType === 'checklist_toolkit' ? 3200 : 3000;
+    return Math.max(1600, Math.min(ceiling, baseEstimate));
 }
 
 function buildSectionArtDirectionContext(input: {
@@ -744,7 +744,7 @@ function buildArchitectPlanFromLibrarian(input: {
                 sourceVideoIds: [row.videoId],
                 layoutHint: `Use a premium ${input.productType} section with clear hierarchy and grounded teaching.`,
                 requiredElements: row.extractionFocus.length > 0 ? row.extractionFocus.slice(0, 4) : ['real creator evidence', 'actionable takeaway'],
-                wordTarget: input.productType === 'checklist_toolkit' ? 140 : 180,
+                wordTarget: input.productType === 'checklist_toolkit' ? 350 : 450,
             })),
             keyTakeaways: input.librarianPack.evidenceRows
                 .slice(0, 5)

@@ -28,6 +28,7 @@ import {
 } from '@/lib/ai/topic-discovery';
 import { loadRankedTopicSuggestionsFromGraph } from '@/lib/ai/topic-graph';
 import { runIterativeRetrieval } from '@/lib/ai/iterative-retrieval';
+import { requestKimiTextCompletion } from '@/lib/ai/kimi-structured';
 import { log } from '@/lib/logger';
 import type { ProductType } from '@/types/build-packet';
 
@@ -469,9 +470,9 @@ function countHtmlWords(html: string): number {
 }
 
 const MAX_GROUNDED_VIDEOS = 8;
-const MAX_TRANSCRIPT_CONTEXT_CHARS = 2200;
-const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 1800;
-const KIMI_PIPELINE_TIMEOUT_MS = 240_000;
+const MAX_TRANSCRIPT_CONTEXT_CHARS = 3200;
+const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 2600;
+const KIMI_PIPELINE_TIMEOUT_MS = 360_000;
 const CRITIC_LOOP_TIMEOUT_MS = 70_000;
 const BROWSER_QA_TIMEOUT_MS = 25_000;
 const MARKET_OFFER_TIMEOUT_MS = 20_000;
@@ -984,11 +985,59 @@ export async function POST(request: Request) {
 
                 // Generate a smart title
                 const titlePrompt = body.confirmedTopic || message;
-                const cleanTitle = titlePrompt
+                const regexFallbackTitle = titlePrompt
                     .replace(/^(create|make|build|generate)\s+(a|an|my|me)?\s*/i, '')
                     .replace(/\s*(from|using|with)\s+my\s+(top\s+)?(videos?|content|tiktoks?).*/i, '')
                     .trim();
-                const productTitle = cleanTitle.charAt(0).toUpperCase() + cleanTitle.slice(1);
+                const fallbackTitle = regexFallbackTitle.charAt(0).toUpperCase() + regexFallbackTitle.slice(1);
+
+                let productTitle = fallbackTitle;
+                if (process.env.KIMI_API_KEY) {
+                    try {
+                        const typeLabel = productType === 'pdf_guide' ? 'PDF guide'
+                            : productType === 'mini_course' ? 'mini course'
+                            : productType === 'challenge_7day' ? '7-day challenge'
+                            : 'checklist toolkit';
+                        const rawTitle = await withTimeout(
+                            requestKimiTextCompletion({
+                                systemPrompt: `You are a product naming expert for creator-led digital products. Generate ONE compelling, specific product title. Rules:
+- Return ONLY the title text, nothing else (no quotes, no explanation, no prefix)
+- Keep it between 4 and 12 words
+- Make it specific to the topic, not generic
+- Use a benefit-driven or outcome-driven framing
+- Do NOT include the product type (e.g. "guide", "course", "challenge") in the title
+- Do NOT use colons or subtitles
+- Capitalize as a proper title`,
+                                userPrompt: `Topic: ${titlePrompt}\nProduct type: ${typeLabel}\nCreator: ${creator.display_name || creator.handle}`,
+                                maxTokens: 60,
+                                thinking: 'disabled',
+                                preset: 'analysis_json',
+                                operation: 'title.generation',
+                            }),
+                            8_000,
+                            'AI title generation'
+                        );
+
+                        const cleaned = rawTitle
+                            .replace(/^["'`]+|["'`]+$/g, '')
+                            .replace(/^(title:\s*)/i, '')
+                            .trim();
+
+                        if (cleaned.length >= 8 && cleaned.length <= 120 && !cleaned.includes('\n')) {
+                            productTitle = cleaned;
+                            send({
+                                type: 'status',
+                                message: `✨ Generated title: "${productTitle}"`,
+                                phase: 'planning',
+                            });
+                        }
+                    } catch (titleError) {
+                        log.warn('AI title generation failed; using fallback', {
+                            creatorId: creator.id,
+                            error: titleError instanceof Error ? titleError.message : 'Unknown title error',
+                        });
+                    }
+                }
 
                 const slug = productTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
                     + '-' + Date.now().toString(36);
