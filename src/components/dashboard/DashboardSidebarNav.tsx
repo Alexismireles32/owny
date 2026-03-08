@@ -42,7 +42,7 @@ export function DashboardSidebarNav({ displayName, handle, avatarUrl }: Dashboar
                 key={item.href}
                 href={item.href}
                 className={cn(
-                    'flex h-10 items-center gap-2 rounded-md px-2 text-xs text-slate-600 transition-colors sm:px-3 sm:text-sm',
+                    'flex h-10 items-center gap-2.5 rounded-lg px-2.5 text-xs text-slate-600 transition-colors sm:px-3 sm:text-sm',
                     isActive ? 'bg-slate-900 text-white' : 'hover:bg-slate-100 hover:text-slate-900'
                 )}
             >
@@ -60,11 +60,11 @@ export function DashboardSidebarNav({ displayName, handle, avatarUrl }: Dashboar
     }
 
     return (
-        <aside className="hidden w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white sm:block sm:w-56">
-            <div className="flex h-full min-h-0 flex-col p-2 sm:p-3">
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 sm:px-2">Studio</p>
+        <aside className="hidden w-16 shrink-0 overflow-hidden rounded-2xl border border-slate-200/40 bg-white sm:block sm:w-56">
+            <div className="flex h-full min-h-0 flex-col p-2.5 sm:p-4">
+                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 sm:px-2">Studio</p>
 
-                <nav className="mt-2 flex flex-1 flex-col gap-1">
+                <nav className="mt-3 flex flex-1 flex-col gap-1.5">
                     {PRIMARY_NAV.map(renderNavItem)}
 
                     <div className="my-2 h-px bg-slate-100" />

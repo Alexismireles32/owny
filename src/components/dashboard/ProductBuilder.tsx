@@ -658,7 +658,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,rgba(248,250,252,0.92),rgba(255,255,255,1))]">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/80 px-3 py-3 backdrop-blur sm:px-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/60 bg-white/80 px-4 py-3.5 backdrop-blur sm:px-5">
                 <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                         Creator Product Studio
@@ -699,15 +699,15 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                 <>
                     <div className="relative flex min-h-0 flex-1 overflow-hidden">
                         <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.20),transparent_42%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_38%)]" />
-                        <div className="relative flex min-h-0 w-full items-center p-3 sm:p-4">
-                            <div className="grid w-full gap-4 xl:grid-cols-[1.08fr_0.92fr]">
+                        <div className="relative flex min-h-0 w-full items-center p-4 sm:p-6">
+                            <div className="grid w-full gap-5 xl:grid-cols-[1.08fr_0.92fr]">
                                 <motion.div
                                     initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={entryTransition}
                                 >
                                     <Card className="overflow-hidden border-slate-200/80 bg-white/90 py-0 shadow-[0_28px_90px_-48px_rgba(15,23,42,0.45)] backdrop-blur">
-                                        <CardContent className="space-y-6 px-5 py-6 sm:px-6">
+                                        <CardContent className="space-y-7 px-6 py-7 sm:px-8">
                                         <Badge
                                             variant="outline"
                                             className="border-amber-200 bg-amber-50 text-[10px] uppercase tracking-[0.14em] text-amber-800"
@@ -724,22 +724,22 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                             </p>
                                         </div>
 
-                                        <div className="grid gap-3 sm:grid-cols-3">
-                                            <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+                                        <div className="grid gap-4 sm:grid-cols-3">
+                                            <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-5">
                                                 <Bot className="size-4 text-slate-900" />
                                                 <p className="mt-3 text-sm font-medium text-slate-900">Source-grounded</p>
                                                 <p className="mt-1 text-xs leading-5 text-slate-600">
                                                     Uses transcripts, clip cards, and creator voice as the foundation.
                                                 </p>
                                             </div>
-                                            <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+                                            <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-5">
                                                 <Sparkles className="size-4 text-amber-700" />
                                                 <p className="mt-3 text-sm font-medium text-slate-900">Offer-aware</p>
                                                 <p className="mt-1 text-xs leading-5 text-slate-600">
                                                     Shapes the promise, positioning, and packaging before writing.
                                                 </p>
                                             </div>
-                                            <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+                                            <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-5">
                                                 <Rocket className="size-4 text-sky-700" />
                                                 <p className="mt-3 text-sm font-medium text-slate-900">Ship-ready</p>
                                                 <p className="mt-1 text-xs leading-5 text-slate-600">
@@ -820,13 +820,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     </div>
 
                     <form
-                        className="border-t border-slate-200/80 bg-white/85 px-3 py-3 backdrop-blur sm:px-4"
+                        className="border-t border-slate-200/60 bg-white/85 px-4 py-4 backdrop-blur sm:px-5"
                         onSubmit={(e) => {
                             e.preventDefault();
                             void handleSubmit();
                         }}
                     >
-                        <div className="flex items-center gap-2 rounded-[22px] border border-slate-200 bg-white px-2 py-2 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.35)]">
+                        <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200/80 bg-white px-3 py-2.5 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.25)]">
                             <MessageSquareText className="ml-2 hidden size-4 text-slate-400 sm:block" />
                             <Input
                                 ref={inputRef}
@@ -836,7 +836,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 placeholder="Describe the product you want to build from your content..."
                                 className="h-10 border-0 bg-transparent px-2 text-sm shadow-none focus-visible:ring-0"
                             />
-                            <Button type="submit" size="sm" className="h-10 rounded-xl px-4" disabled={!input.trim()}>
+                            <Button type="submit" size="sm" className="h-10 rounded-xl px-5" disabled={!input.trim()}>
                                 <SendHorizonal />
                                 Send
                             </Button>
@@ -920,7 +920,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
                         <section
                             className={cn(
-                                'min-h-[42vh] min-w-0 flex-col border-b border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.65))] lg:flex lg:min-h-0 lg:w-[39%] lg:max-w-[420px] lg:border-b-0 lg:border-r',
+                                'min-h-[42vh] min-w-0 flex-col border-b border-slate-200/60 bg-[linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.65))] lg:flex lg:min-h-0 lg:w-[38%] lg:max-w-[440px] lg:border-b-0 lg:border-r',
                                 activePane === 'assistant' ? 'flex' : 'hidden'
                             )}
                         >
@@ -1138,13 +1138,13 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                     </div>
 
                     <form
-                        className="sticky bottom-0 z-20 border-t border-slate-200/80 bg-white/92 px-3 py-3 backdrop-blur supports-[padding:max(0px)]:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4"
+                        className="sticky bottom-0 z-20 border-t border-slate-200/60 bg-white/92 px-4 py-3.5 backdrop-blur supports-[padding:max(0px)]:pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-5"
                         onSubmit={(e) => {
                             e.preventDefault();
                             void handleSubmit();
                         }}
                     >
-                        <div className="flex items-center gap-2 rounded-[22px] border border-slate-200 bg-white px-2 py-2 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.35)]">
+                        <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200/80 bg-white px-3 py-2.5 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.25)]">
                             <Layers3 className="ml-2 hidden size-4 text-slate-400 sm:block" />
                             <Input
                                 ref={inputRef}
@@ -1161,7 +1161,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 className="h-10 border-0 bg-transparent px-2 text-sm shadow-none focus-visible:ring-0"
                                 disabled={buildState.isBuilding}
                             />
-                            <Button type="submit" size="sm" className="h-10 rounded-xl px-4" disabled={!input.trim() || buildState.isBuilding}>
+                            <Button type="submit" size="sm" className="h-10 rounded-xl px-5" disabled={!input.trim() || buildState.isBuilding}>
                                 <SendHorizonal />
                                 Send
                             </Button>

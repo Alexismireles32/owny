@@ -46,14 +46,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                 </div>
             )}
 
-            <div className="min-h-0 flex-1 p-2 pb-16 sm:p-4 sm:pb-4">
-                <div className="mx-auto flex h-full w-full max-w-[1600px] gap-2">
+            <div className="min-h-0 flex-1 p-2 pb-16 sm:p-5 sm:pb-5">
+                <div className="mx-auto flex h-full w-full max-w-[1600px] gap-3 sm:gap-5">
                     <DashboardSidebarNav
                         displayName={creator.display_name}
                         handle={creator.handle}
                         avatarUrl={creator.avatar_url}
                     />
-                    <main className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/50 bg-white shadow-sm ring-1 ring-slate-900/5">
+                    <main className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/40 bg-white shadow-sm">
                         {children}
                     </main>
                 </div>
