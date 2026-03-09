@@ -448,7 +448,7 @@ function buildTranscriptContext(
             if (b.score !== a.score) return b.score - a.score;
             return a.idx - b.idx;
         })
-        .slice(0, 6)
+        .slice(0, 10)
         .sort((a, b) => a.idx - b.idx);
 
     const chunkJoined = rankedChunks.map((chunk) => chunk.text).join('\n');
@@ -469,9 +469,9 @@ function countHtmlWords(html: string): number {
     return text.split(' ').filter(Boolean).length;
 }
 
-const MAX_GROUNDED_VIDEOS = 8;
-const MAX_TRANSCRIPT_CONTEXT_CHARS = 3200;
-const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 2600;
+const MAX_GROUNDED_VIDEOS = 14;
+const MAX_TRANSCRIPT_CONTEXT_CHARS = 6000;
+const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 4800;
 const KIMI_PIPELINE_TIMEOUT_MS = 360_000;
 const CRITIC_LOOP_TIMEOUT_MS = 70_000;
 const BROWSER_QA_TIMEOUT_MS = 25_000;
@@ -840,7 +840,7 @@ export async function POST(request: Request) {
                     seedCandidates: seedResults,
                     searchLimit: 100,
                     maxCycles: 3,
-                    targetSelectedVideos: 8,
+                    targetSelectedVideos: 14,
                     search: (query, options) => hybridSearch(db, creator.id, query, { limit: options?.limit ?? 100 }),
                     rerank: rerankCandidates,
                 });
