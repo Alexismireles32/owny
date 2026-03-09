@@ -658,45 +658,44 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,rgba(248,250,252,0.92),rgba(255,255,255,1))]">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/60 bg-white/80 px-4 py-3.5 backdrop-blur sm:px-5">
-                <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Creator Product Studio
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-slate-900">
-                        Building with {displayName}&apos;s videos, transcripts, and brand DNA
-                    </p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Badge
-                        variant="outline"
-                        className="border-slate-300 bg-white text-[10px] uppercase tracking-[0.12em] text-slate-600"
-                    >
-                        {headerPhaseLabel}
-                    </Badge>
-                    <Badge
-                        variant="outline"
-                        className="hidden border-sky-200 bg-sky-50 text-[10px] uppercase tracking-[0.12em] text-sky-700 sm:inline-flex"
-                    >
-                        Evidence-grounded
-                    </Badge>
-                    {buildState.isBuilding && (
-                        <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            className="border-red-200 text-red-700 hover:bg-red-50"
-                            onClick={stopActiveBuild}
-                        >
-                            <Square />
-                            Stop
-                        </Button>
-                    )}
-                </div>
-            </div>
-
             {showWelcome ? (
                 <>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/60 bg-white/80 px-4 py-3.5 backdrop-blur sm:px-5">
+                        <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                Creator Product Studio
+                            </p>
+                            <p className="mt-1 text-sm font-medium text-slate-900">
+                                Building with {displayName}&apos;s videos, transcripts, and brand DNA
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Badge
+                                variant="outline"
+                                className="border-slate-300 bg-white text-[10px] uppercase tracking-[0.12em] text-slate-600"
+                            >
+                                {headerPhaseLabel}
+                            </Badge>
+                            <Badge
+                                variant="outline"
+                                className="hidden border-sky-200 bg-sky-50 text-[10px] uppercase tracking-[0.12em] text-sky-700 sm:inline-flex"
+                            >
+                                Evidence-grounded
+                            </Badge>
+                            {buildState.isBuilding && (
+                                <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="outline"
+                                    className="border-red-200 text-red-700 hover:bg-red-50"
+                                    onClick={stopActiveBuild}
+                                >
+                                    <Square />
+                                    Stop
+                                </Button>
+                            )}
+                        </div>
+                    </div>
                     <div className="relative flex min-h-0 flex-1 overflow-hidden">
                         <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.20),transparent_42%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_38%)]" />
                         <div className="relative flex min-h-0 w-full items-center p-4 sm:p-6">
