@@ -846,39 +846,57 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                 </>
             ) : (
                 <>
-                    <div className="border-b border-slate-200/80 bg-white/90 px-3 py-2.5 backdrop-blur lg:hidden">
-                        <div className="grid grid-cols-2 gap-2">
+                    {/* ── Unified toolbar ── */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 bg-white/90 px-4 py-2 backdrop-blur sm:px-5">
+                        <div className="flex items-center gap-2">
                             <button
                                 type="button"
                                 className={cn(
-                                    'flex items-center justify-center gap-2 rounded-2xl border px-3 py-2.5 text-sm font-medium transition-colors',
+                                    'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
                                     activePane === 'assistant'
-                                        ? 'border-slate-900 bg-slate-900 text-white shadow-[0_18px_34px_-24px_rgba(15,23,42,0.5)]'
-                                        : 'border-slate-200 bg-white text-slate-600'
+                                        ? 'border-slate-900 bg-slate-900 text-white'
+                                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                                 )}
-                                onClick={() => setActivePane('assistant')}
+                                onClick={() => setActivePane(activePane === 'assistant' ? 'preview' : 'assistant')}
                             >
-                                <MessageSquareText className="size-4" />
-                                Assistant
+                                <Bot className="size-3.5" />
+                                <span className="hidden sm:inline">{buildState.isBuilding ? 'Building' : 'Chat'}</span>
+                                <span
+                                    className={cn(
+                                        'h-1.5 w-1.5 rounded-full',
+                                        buildState.isBuilding ? 'animate-pulse bg-sky-400' : 'bg-emerald-400'
+                                    )}
+                                />
                             </button>
-                            <button
-                                type="button"
-                                className={cn(
-                                    'flex items-center justify-center gap-2 rounded-2xl border px-3 py-2.5 text-sm font-medium transition-colors',
-                                    activePane === 'preview'
-                                        ? 'border-slate-900 bg-slate-900 text-white shadow-[0_18px_34px_-24px_rgba(15,23,42,0.5)]'
-                                        : 'border-slate-200 bg-white text-slate-600'
-                                )}
-                                onClick={() => setActivePane('preview')}
-                            >
-                                <Eye className="size-4" />
-                                Preview
-                            </button>
-                        </div>
-                    </div>
 
-                    <div className="border-b border-slate-200/80 bg-white/85 px-3 py-2.5 backdrop-blur lg:hidden">
-                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="h-4 w-px bg-slate-200" />
+
+                            <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                                {headerPhaseLabel}
+                            </Badge>
+
+                            <Badge
+                                variant="outline"
+                                className="hidden border-sky-200 bg-sky-50/60 text-[10px] uppercase tracking-[0.08em] text-sky-600 sm:inline-flex"
+                            >
+                                Evidence-grounded
+                            </Badge>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                            {buildState.isBuilding && (
+                                <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="outline"
+                                    className="border-red-200 text-red-700 hover:bg-red-50"
+                                    onClick={stopActiveBuild}
+                                >
+                                    <Square />
+                                    Stop
+                                </Button>
+                            )}
+
                             {versionHistory.length > 0 && (
                                 <Button
                                     type="button"
@@ -911,241 +929,153 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
                                 </Badge>
                             )}
 
-                            <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em] text-slate-600">
-                                {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
-                            </Badge>
+                            <Button type="button" size="xs" variant="ghost" onClick={handleClearChat} className="text-slate-500">
+                                <RefreshCcw />
+                                <span className="hidden sm:inline">Clear</span>
+                            </Button>
                         </div>
                     </div>
 
-                    <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-                        <section
-                            className={cn(
-                                'min-h-[42vh] min-w-0 flex-col border-b border-slate-200/60 bg-[linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.65))] lg:flex lg:min-h-0 lg:w-[38%] lg:max-w-[440px] lg:border-b-0 lg:border-r',
-                                activePane === 'assistant' ? 'flex' : 'hidden'
-                            )}
-                        >
-                            <div className="flex items-center justify-between border-b border-slate-200 bg-white/85 px-3 py-3 backdrop-blur sm:px-3.5">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <span
-                                            className={cn(
-                                                'inline-flex rounded-full border border-slate-200 bg-slate-100 p-1 text-slate-700',
-                                                buildState.isBuilding && 'border-sky-200 bg-sky-100 text-sky-700'
-                                            )}
-                                        >
-                                            <Bot className="size-3.5" />
-                                        </span>
-                                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">
-                                            {buildState.isBuilding ? 'Builder running' : buildState.productId ? 'Refine the draft' : 'Assistant'}
-                                        </p>
-                                    </div>
-                                    <p className="mt-1 text-sm font-medium text-slate-900">
-                                        Tell Owny what to improve and it will update the live draft.
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span
-                                        className={cn(
-                                            'h-2 w-2 rounded-full bg-slate-400',
-                                            buildState.isBuilding && 'animate-pulse bg-sky-500'
-                                        )}
-                                    />
-                                    <Button type="button" size="xs" variant="ghost" onClick={handleClearChat}>
-                                        <RefreshCcw />
-                                        Clear
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <AnimatePresence initial={false}>
-                                {liveStatus && (
-                                    <motion.div
-                                        key={`${liveStatus.phase}-${liveStatus.headline}`}
-                                        initial={shouldReduceMotion ? false : { opacity: 0, y: -10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={shouldReduceMotion ? undefined : { opacity: 0, y: -6 }}
-                                        transition={entryTransition}
-                                        className="border-b border-slate-200 bg-white/70 px-3 py-3 backdrop-blur"
-                                    >
-                                        <div
-                                        className={cn(
-                                            'rounded-[24px] border px-4 py-4 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.28)]',
-                                            liveStatus.tone === 'working' && 'border-sky-200 bg-sky-50/80',
-                                            liveStatus.tone === 'success' && 'border-emerald-200 bg-emerald-50/80',
-                                            liveStatus.tone === 'error' && 'border-rose-200 bg-rose-50/80'
-                                        )}
-                                    >
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                                                    {getFriendlyPhaseLabel(liveStatus.phase)}
-                                                </p>
-                                                <p className="mt-1 text-sm font-medium text-slate-900">{liveStatus.headline}</p>
-                                                {liveStatus.detail && (
-                                                    <p className="mt-1 text-xs leading-5 text-slate-600">{liveStatus.detail}</p>
-                                                )}
-                                            </div>
-                                            {liveStatus.tone === 'working' && (
-                                                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-sky-500 animate-pulse" />
-                                            )}
-                                        </div>
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-
-                            <motion.div
-                                ref={messagesContainerRef}
-                                className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
-                                layout
-                                onScroll={(event) => {
-                                    const container = event.currentTarget;
-                                    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-                                    shouldAutoScrollRef.current = distanceFromBottom < 72;
-                                }}
+                    {/* ── Collapsible assistant chat strip ── */}
+                    <AnimatePresence initial={false}>
+                        {activePane === 'assistant' && (
+                            <motion.section
+                                key="chat-strip"
+                                initial={shouldReduceMotion ? false : { height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={shouldReduceMotion ? undefined : { height: 0, opacity: 0 }}
+                                transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.25, ease: 'easeInOut' }}
+                                className="shrink-0 overflow-hidden border-b border-slate-200/60 bg-[linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.65))]"
                             >
-                                {messages.map((msg) => {
-                                    const cleanContent = sanitizeMessageText(msg.content);
-                                    const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
-                                    return (
+                                {/* Live status banner */}
+                                <AnimatePresence initial={false}>
+                                    {liveStatus && (
                                         <motion.div
-                                            key={msg.id}
-                                            layout
-                                            initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                            key={`${liveStatus.phase}-${liveStatus.headline}`}
+                                            initial={shouldReduceMotion ? false : { opacity: 0, y: -10 }}
                                             animate={{ opacity: 1, y: 0 }}
-                                            transition={springTransition}
-                                            className="space-y-1"
+                                            exit={shouldReduceMotion ? undefined : { opacity: 0, y: -6 }}
+                                            transition={entryTransition}
+                                            className="border-b border-slate-200/60 bg-white/70 px-4 py-2 backdrop-blur sm:px-5"
                                         >
                                             <div
                                                 className={cn(
-                                                    'max-w-[92%] rounded-[22px] border px-3.5 py-3 text-[13px] leading-5 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.28)]',
-                                                    msg.role === 'user' && 'ml-auto rounded-br-md border-slate-900 bg-slate-900 text-white',
-                                                    msg.role === 'assistant' && 'mr-auto rounded-bl-md border-white bg-white/95 text-slate-900'
+                                                    'flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-sm',
+                                                    liveStatus.tone === 'working' && 'border-sky-200 bg-sky-50/80',
+                                                    liveStatus.tone === 'success' && 'border-emerald-200 bg-emerald-50/80',
+                                                    liveStatus.tone === 'error' && 'border-rose-200 bg-rose-50/80'
                                                 )}
                                             >
-                                                {lines.length === 0
-                                                    ? cleanContent
-                                                    : lines.map((line, idx) => (
-                                                        <p key={`${msg.id}-${idx}`} className={idx === lines.length - 1 ? '' : 'mb-1.5'}>
-                                                            {line}
-                                                        </p>
-                                                    ))}
-                                            </div>
-
-                                            {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
-                                                <div className="grid grid-cols-1 gap-2">
-                                                    {msg.topicSuggestions.map((topic, index) => (
-                                                        <motion.div
-                                                            key={topic.topic}
-                                                            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-                                                            animate={{ opacity: 1, y: 0 }}
-                                                            transition={
-                                                                shouldReduceMotion
-                                                                    ? { duration: 0 }
-                                                                    : { duration: 0.24, delay: 0.03 * index, ease: 'easeOut' }
-                                                            }
-                                                        >
-                                                            <Button
-                                                                type="button"
-                                                                variant="outline"
-                                                                className="h-auto w-full items-start justify-between rounded-[22px] border-slate-200 bg-white px-3 py-3 text-left text-slate-700 shadow-[0_16px_40px_-30px_rgba(15,23,42,0.28)]"
-                                                                onClick={() => handleTopicSelect(topic)}
-                                                                disabled={buildState.isBuilding}
-                                                            >
-                                                                <div className="min-w-0 pr-3">
-                                                                    <p className="text-sm font-medium text-slate-900">{topic.topic}</p>
-                                                                    {topic.problem && (
-                                                                        <p className="mt-1 text-xs leading-5 text-slate-600">
-                                                                            {topic.problem}
-                                                                        </p>
-                                                                    )}
-                                                                </div>
-                                                                <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-[10px]">
-                                                                    {topic.videoCount}
-                                                                </Badge>
-                                                            </Button>
-                                                        </motion.div>
-                                                    ))}
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                                                        {getFriendlyPhaseLabel(liveStatus.phase)}
+                                                    </p>
+                                                    <p className="text-sm font-medium text-slate-900">{liveStatus.headline}</p>
+                                                    {liveStatus.detail && (
+                                                        <p className="text-xs leading-5 text-slate-600">{liveStatus.detail}</p>
+                                                    )}
                                                 </div>
-                                            )}
+                                                {liveStatus.tone === 'working' && (
+                                                    <span className="h-2 w-2 flex-shrink-0 rounded-full bg-sky-500 animate-pulse" />
+                                                )}
+                                            </div>
                                         </motion.div>
-                                    );
-                                })}
-                            </motion.div>
-                        </section>
-
-                        <section
-                            className={cn(
-                                'min-h-[38vh] min-w-0 flex-1 flex-col bg-white lg:flex lg:min-h-0',
-                                activePane === 'preview' ? 'flex' : 'hidden'
-                            )}
-                        >
-                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/85 px-3 py-3 backdrop-blur sm:px-3.5">
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-1 text-slate-700">
-                                            <Eye className="size-3.5" />
-                                        </span>
-                                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">Preview</p>
-                                    </div>
-                                    <p className="mt-1 text-sm font-medium text-slate-900">
-                                        Watch the product update live as sections stream in.
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                    {versionHistory.length > 0 && (
-                                        <Button
-                                            type="button"
-                                            size="xs"
-                                            variant="outline"
-                                            className="border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                                            onClick={handleUndo}
-                                            disabled={buildState.isBuilding}
-                                        >
-                                            <RefreshCcw />
-                                            Undo
-                                        </Button>
                                     )}
+                                </AnimatePresence>
 
-                                    {buildState.productId && publishStatus !== 'published' && (
-                                        <Button
-                                            type="button"
-                                            size="xs"
-                                            onClick={() => void handlePublish()}
-                                            disabled={buildState.isBuilding || publishStatus === 'publishing'}
-                                        >
-                                            <Rocket />
-                                            {publishStatus === 'publishing' ? 'Publishing...' : 'Publish'}
-                                        </Button>
-                                    )}
+                                {/* Chat messages — compact scrollable strip */}
+                                <motion.div
+                                    ref={messagesContainerRef}
+                                    className="flex max-h-[200px] min-h-0 flex-col gap-2 overflow-y-auto px-4 py-3 sm:px-5"
+                                    layout
+                                    onScroll={(event) => {
+                                        const container = event.currentTarget;
+                                        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+                                        shouldAutoScrollRef.current = distanceFromBottom < 72;
+                                    }}
+                                >
+                                    {messages.map((msg) => {
+                                        const cleanContent = sanitizeMessageText(msg.content);
+                                        const lines = cleanContent.split('\n').filter((line) => line.trim().length > 0);
+                                        return (
+                                            <motion.div
+                                                key={msg.id}
+                                                layout
+                                                initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={springTransition}
+                                                className="space-y-1"
+                                            >
+                                                <div
+                                                    className={cn(
+                                                        'max-w-[80%] rounded-xl border px-3 py-2 text-[13px] leading-5',
+                                                        msg.role === 'user' && 'ml-auto border-slate-900 bg-slate-900 text-white',
+                                                        msg.role === 'assistant' && 'mr-auto border-slate-200 bg-white text-slate-900'
+                                                    )}
+                                                >
+                                                    {lines.length === 0
+                                                        ? cleanContent
+                                                        : lines.map((line, idx) => (
+                                                            <p key={`${msg.id}-${idx}`} className={idx === lines.length - 1 ? '' : 'mb-1'}>
+                                                                {line}
+                                                            </p>
+                                                        ))}
+                                                </div>
 
-                                    {publishStatus === 'published' && (
-                                        <Badge variant="secondary" className="text-[10px] uppercase tracking-[0.08em]">
-                                            Live
-                                        </Badge>
-                                    )}
+                                                {msg.topicSuggestions && msg.topicSuggestions.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {msg.topicSuggestions.map((topic, index) => (
+                                                            <motion.div
+                                                                key={topic.topic}
+                                                                initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+                                                                animate={{ opacity: 1, y: 0 }}
+                                                                transition={
+                                                                    shouldReduceMotion
+                                                                        ? { duration: 0 }
+                                                                        : { duration: 0.24, delay: 0.03 * index, ease: 'easeOut' }
+                                                                }
+                                                            >
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    className="h-auto rounded-lg border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700"
+                                                                    onClick={() => handleTopicSelect(topic)}
+                                                                    disabled={buildState.isBuilding}
+                                                                >
+                                                                    <span className="font-medium">{topic.topic}</span>
+                                                                    <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">
+                                                                        {topic.videoCount}
+                                                                    </Badge>
+                                                                </Button>
+                                                            </motion.div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </motion.div>
+                                        );
+                                    })}
+                                </motion.div>
+                            </motion.section>
+                        )}
+                    </AnimatePresence>
 
-                                    <Badge variant="outline" className="text-[10px] uppercase tracking-[0.08em] text-slate-600">
-                                        {buildState.isBuilding ? 'Syncing' : hasProduct ? 'Ready' : 'Idle'}
-                                    </Badge>
-                                </div>
-                            </div>
+                    {/* ── Full-width preview — fills all remaining height ── */}
+                    <section className="flex min-h-0 flex-1 flex-col bg-white">
+                        <div className="min-h-0 flex-1 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.08),transparent_32%),linear-gradient(180deg,rgba(248,250,252,1),rgba(255,255,255,1))] p-2 sm:p-3">
+                            <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
+                        </div>
+                    </section>
 
-                            <div className="min-h-0 flex-1 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.10),transparent_32%),linear-gradient(180deg,rgba(248,250,252,1),rgba(255,255,255,1))] p-3 sm:p-4">
-                                <LivePreview html={buildState.html} isLoading={buildState.isBuilding} />
-                            </div>
-                        </section>
-                    </div>
-
+                    {/* ── Input bar ── */}
                     <form
-                        className="sticky bottom-0 z-20 border-t border-slate-200/60 bg-white/92 px-4 py-3.5 backdrop-blur supports-[padding:max(0px)]:pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-5"
+                        className="sticky bottom-0 z-20 border-t border-slate-200/60 bg-white/92 px-4 py-3 backdrop-blur supports-[padding:max(0px)]:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5"
                         onSubmit={(e) => {
                             e.preventDefault();
                             void handleSubmit();
                         }}
                     >
-                        <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200/80 bg-white px-3 py-2.5 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.25)]">
-                            <Layers3 className="ml-2 hidden size-4 text-slate-400 sm:block" />
+                        <div className="flex items-center gap-2.5 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_10px_35px_-24px_rgba(15,23,42,0.25)]">
+                            <Layers3 className="ml-1 hidden size-4 text-slate-400 sm:block" />
                             <Input
                                 ref={inputRef}
                                 type="text"
