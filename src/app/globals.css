@@ -59,7 +59,10 @@
   --primary: var(--owny-color-primary, oklch(0.205 0 0));
   --primary-foreground: var(--owny-color-primary-foreground, oklch(0.985 0 0));
   --secondary: var(--owny-color-secondary, oklch(0.97 0 0));
-  --secondary-foreground: var(--owny-color-secondary-foreground, oklch(0.205 0 0));
+  --secondary-foreground: var(
+    --owny-color-secondary-foreground,
+    oklch(0.205 0 0)
+  );
   --muted: var(--owny-color-muted, oklch(0.97 0 0));
   --muted-foreground: var(--owny-color-muted-foreground, oklch(0.556 0 0));
   --accent: var(--owny-color-accent, oklch(0.97 0 0));
@@ -134,5 +137,34 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Builder dark scrollbar */
+.builder-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.builder-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.builder-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+.builder-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+.builder-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+/* Builder iframe shimmer */
+@keyframes builder-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
   }
 }

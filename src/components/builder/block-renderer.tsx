@@ -4,6 +4,7 @@
 // PRD §6.2 — Renders all 15 block types with variant support
 // Tailwind-first rendering: Tailwind for layout/polish, style={{}} for dynamic theme colors
 
+import { motion } from 'motion/react';
 import type { DSLBlock, ProductDSL } from '@/types/product-dsl';
 
 interface BlockRendererProps {
@@ -33,7 +34,7 @@ export function BlockRenderer({ block, theme, isSelected, onSelect }: BlockRende
         <div
             className={`
                 transition-all duration-200
-                ${isSelected ? 'ring-2 ring-offset-2' : ''}
+                ${isSelected ? 'ring-2 ring-offset-2' : 'hover:shadow-md hover:-translate-y-0.5 hover:shadow-black/5'}
                 ${onSelect ? 'cursor-pointer' : ''}
                 ${radiusClass[theme.borderRadius] || 'rounded-lg'}
             `}
@@ -138,8 +139,11 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                     )}
                     <ul className="space-y-2">
                         {block.props.items.map((item, i) => (
-                            <li
+                            <motion.li
                                 key={i}
+                                initial={{ opacity: 0, x: -6 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: i * 0.04, duration: 0.25 }}
                                 className="flex items-start gap-3 group"
                                 style={{ color: theme.textColor }}
                             >
@@ -152,7 +156,7 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                                             : '•'}
                                 </span>
                                 <span>{item}</span>
-                            </li>
+                            </motion.li>
                         ))}
                     </ul>
                 </div>
@@ -171,8 +175,11 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                     )}
                     <div className={`${block.variant === 'horizontal' ? 'flex gap-6 overflow-x-auto' : 'space-y-4'}`}>
                         {block.props.steps.map((step, i) => (
-                            <div
+                            <motion.div
                                 key={i}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.06, duration: 0.3 }}
                                 className={`flex gap-4 ${block.variant === 'numbered-card'
                                     ? `p-4 ${radiusClass[theme.borderRadius]} ${shadowClass[theme.shadow]} border`
                                     : ''
@@ -191,7 +198,7 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                                     <div className="font-semibold" style={{ color: theme.textColor }}>{step.title}</div>
                                     <div className="text-sm opacity-70" style={{ color: theme.textColor }}>{step.description}</div>
                                 </div>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
@@ -209,9 +216,12 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                         </h3>
                     )}
                     <div className="space-y-2">
-                        {block.props.items.map((item) => (
-                            <div
+                        {block.props.items.map((item, i) => (
+                            <motion.div
                                 key={item.id}
+                                initial={{ opacity: 0, x: -6 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: i * 0.04, duration: 0.25 }}
                                 className="flex items-start gap-3 py-1 group hover:bg-black/[0.02] px-2 -mx-2 rounded transition-colors"
                                 style={{ color: theme.textColor }}
                             >
@@ -223,7 +233,7 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                                         <p className="text-sm opacity-60 mt-0.5">{item.description}</p>
                                     )}
                                 </div>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
@@ -265,14 +275,20 @@ function renderBlock(block: DSLBlock, theme: ProductDSL['themeTokens']): React.R
                     )}
                     <div className="space-y-4 divide-y divide-gray-100">
                         {block.props.items.map((item, i) => (
-                            <div key={i} className="pt-4 first:pt-0">
+                            <motion.div
+                                key={i}
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.05, duration: 0.25 }}
+                                className="pt-4 first:pt-0"
+                            >
                                 <div className="font-semibold mb-1" style={{ color: theme.textColor }}>
                                     {item.question}
                                 </div>
                                 <div className="text-sm opacity-70 leading-relaxed" style={{ color: theme.textColor }}>
                                     {item.answer}
                                 </div>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
