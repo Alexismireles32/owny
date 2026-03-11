@@ -474,11 +474,6 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
         }
     }, [onPublish]);
 
-    // Animation helper — skips motion if user prefers reduced motion
-    const _m = shouldReduceMotion
-        ? { initial: false as const, animate: undefined, exit: undefined, transition: { duration: 0 } }
-        : {};
-
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-[#071320] via-[#0d1e31] to-[#132a3f] text-slate-100">
             {/* Top bar */}
