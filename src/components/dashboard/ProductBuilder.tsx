@@ -328,7 +328,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'published'>('idle');
     const [liveStatus, setLiveStatus] = useState<LiveStatusState | null>(null);
     const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
-    const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+    const [isMounted, setIsMounted] = useState(false);
 
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -337,8 +337,8 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     const sectionCountRef = useRef(0);
     const shouldAutoScrollRef = useRef(true);
 
-    // Portal target for full-screen mode
-    useEffect(() => { setPortalTarget(document.body); }, []);
+    // Track mount for portal
+    useEffect(() => { setIsMounted(true); }, []); // eslint-disable-line react-hooks/set-state-in-effect
 
     // Auto-scroll chat
     useEffect(() => {
@@ -353,18 +353,6 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
             try { localStorage.setItem(`owny-builder-${creatorId}`, JSON.stringify({ messages: messages.slice(-50) })); } catch { /* quota */ }
         }
     }, [messages, creatorId]);
-
-    // Keyboard shortcuts
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && buildState.isBuilding) {
-                e.preventDefault();
-                stopActiveBuild();
-            }
-        };
-        window.addEventListener('keydown', handler);
-        return () => window.removeEventListener('keydown', handler);
-    }, [buildState.isBuilding]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const maxPanelWidth = useMemo(() => {
         if (typeof window === 'undefined') return 600;
@@ -388,6 +376,18 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
         setBuildState((s) => ({ ...s, isBuilding: false }));
         setLiveStatus({ phase: 'idle', headline: 'Generation stopped', detail: 'Adjust the prompt and run again.', tone: 'error' });
     }, []);
+
+    // Keyboard shortcuts — declared after stopActiveBuild
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && buildState.isBuilding) {
+                e.preventDefault();
+                stopActiveBuild();
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [buildState.isBuilding, stopActiveBuild]);
 
     /* ── SSE Stream Handler ── */
     const handleStream = useCallback(
@@ -608,7 +608,7 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
 
     /* ── Chat panel content (reusable) ── */
     const chatPanel = (
-        <div className="flex h-full flex-col bg-white" style={{ width: isActive && portalTarget ? panelWidth : undefined }}>
+        <div className="flex h-full flex-col bg-white" style={{ width: isActive && isMounted ? panelWidth : undefined }}>
             {/* Toolbar */}
             <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 px-4 py-2.5 flex-shrink-0">
                 <div className="flex items-center gap-2.5">
@@ -936,8 +936,8 @@ export function ProductBuilder({ creatorId, displayName, onProductCreated }: Pro
     );
 
     // Render the active state inside a portal to cover the full viewport
-    if (portalTarget) {
-        return createPortal(activeContent, portalTarget);
+    if (isMounted && typeof document !== 'undefined') {
+        return createPortal(activeContent, document.body);
     }
 
     // SSR fallback — render inline
