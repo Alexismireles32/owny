@@ -475,7 +475,7 @@ export function VibeBuilder({ productId, initialDsl, initialHtml, initialBuildPa
     }, [onPublish]);
 
     // Animation helper — skips motion if user prefers reduced motion
-    const m = shouldReduceMotion
+    const _m = shouldReduceMotion
         ? { initial: false as const, animate: undefined, exit: undefined, transition: { duration: 0 } }
         : {};
 

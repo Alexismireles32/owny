@@ -23,22 +23,11 @@ interface ProductSummary {
     active_build_packet?: Record<string, unknown> | null;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-    pdf_guide: 'PDF Guide',
-    mini_course: 'Mini Course',
-    challenge_7day: '7-Day Challenge',
-    checklist_toolkit: 'Checklist Toolkit',
-};
 
-function formatCreatedDate(iso: string): string {
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return 'Unknown date';
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
 
 export function DashboardBuildView({ creatorId, displayName, initialProducts }: DashboardBuildViewProps) {
     const [products, setProducts] = useState<ProductSummary[]>(initialProducts);
-    const [productsError, setProductsError] = useState<string | null>(null);
+    const [, setProductsError] = useState<string | null>(null);
 
     const refreshProducts = useCallback(async () => {
         setProductsError(null);
