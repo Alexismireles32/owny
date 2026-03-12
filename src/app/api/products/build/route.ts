@@ -449,13 +449,39 @@ async function loadSeedSearchResults(
         }));
 }
 
-function scoreTextMatch(text: string, tokens: string[]): number {
+function scoreChunkRelevance(text: string, tokens: string[], queryPhrase: string): number {
     if (!text || tokens.length === 0) return 0;
     const lower = text.toLowerCase();
+    const chunkWordCount = lower.split(/\s+/).filter(Boolean).length || 1;
     let score = 0;
+
+    // 1. Unigram matches (weighted by token rarity — longer tokens are rarer)
+    let unigramHits = 0;
     for (const token of tokens) {
-        if (lower.includes(token)) score += 1;
+        if (lower.includes(token)) {
+            unigramHits++;
+            score += 1 + Math.min(token.length, 10) * 0.1;
+        }
     }
+
+    // 2. Bigram bonus — consecutive token pairs appearing together indicates stronger relevance
+    for (let i = 0; i < tokens.length - 1; i++) {
+        const bigram = `${tokens[i]} ${tokens[i + 1]}`;
+        if (lower.includes(bigram)) score += 2.5;
+    }
+
+    // 3. Full query phrase match — highest signal
+    if (queryPhrase.length >= 6 && lower.includes(queryPhrase.toLowerCase())) {
+        score += 5;
+    }
+
+    // 4. Match density: prefer chunks where a higher % of words are query-relevant
+    const density = unigramHits / Math.max(tokens.length, 1);
+    score += density * 2;
+
+    // 5. Normalize by chunk length — prevent long chunks from dominating
+    score = score / Math.log2(chunkWordCount + 2);
+
     return score;
 }
 
@@ -463,7 +489,8 @@ function buildTranscriptContext(
     transcript: string | null | undefined,
     chunks: TranscriptChunkRow[],
     queryTokens: string[],
-    maxChars = 5000
+    maxChars = 5000,
+    queryPhrase = ''
 ): string {
     const transcriptText = (transcript || '').trim();
     if (!transcriptText && chunks.length === 0) return '';
@@ -475,14 +502,14 @@ function buildTranscriptContext(
     const rankedChunks = chunks
         .map((chunk) => ({
             text: chunk.chunk_text,
-            score: scoreTextMatch(chunk.chunk_text, queryTokens),
+            score: scoreChunkRelevance(chunk.chunk_text, queryTokens, queryPhrase),
             idx: chunk.chunk_index,
         }))
         .sort((a, b) => {
             if (b.score !== a.score) return b.score - a.score;
             return a.idx - b.idx;
         })
-        .slice(0, 10)
+        .slice(0, 12)
         .sort((a, b) => a.idx - b.idx);
 
     const chunkJoined = rankedChunks.map((chunk) => chunk.text).join('\n');
@@ -505,7 +532,7 @@ function countHtmlWords(html: string): number {
 
 const MAX_GROUNDED_VIDEOS = 14;
 const MAX_TRANSCRIPT_CONTEXT_CHARS = 6000;
-const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 4800;
+const MAX_CONTENT_CONTEXT_CHARS_PER_VIDEO = 6400;
 const KIMI_PIPELINE_TIMEOUT_MS = 360_000;
 const CRITIC_LOOP_TIMEOUT_MS = 70_000;
 const BROWSER_QA_TIMEOUT_MS = 25_000;
@@ -520,6 +547,9 @@ function buildContentContext(
         views: number;
         topicTags: string[];
         keySteps: string[];
+        whoItsFor: string;
+        outcome: string;
+        bestHook: string;
         transcriptContext: string;
     }>,
     maxVideos = MAX_GROUNDED_VIDEOS,
@@ -527,13 +557,21 @@ function buildContentContext(
 ): string {
     return contexts
         .slice(0, maxVideos)
-        .map((row, i) => `--- VIDEO ${i + 1} [ID: ${row.videoId}] ---
-TITLE: "${row.title}" (${row.views} views)
-${row.topicTags.length > 0 ? `KEY TOPICS: ${row.topicTags.join(', ')}` : 'KEY TOPICS: N/A'}
-${row.keySteps.length > 0 ? `KEY STEPS: ${JSON.stringify(row.keySteps)}` : 'KEY STEPS: []'}
-TRANSCRIPT EVIDENCE:
-${row.transcriptContext.slice(0, maxCharsPerVideo)}
----`)
+        .map((row, i) => {
+            const lines = [
+                `--- VIDEO ${i + 1} [ID: ${row.videoId}] ---`,
+                `TITLE: "${row.title}" (${row.views} views)`,
+                row.topicTags.length > 0 ? `KEY TOPICS: ${row.topicTags.join(', ')}` : 'KEY TOPICS: N/A',
+                row.keySteps.length > 0 ? `KEY STEPS: ${JSON.stringify(row.keySteps)}` : 'KEY STEPS: []',
+            ];
+            if (row.whoItsFor) lines.push(`WHO IT'S FOR: ${row.whoItsFor}`);
+            if (row.outcome) lines.push(`OUTCOME/TRANSFORMATION: ${row.outcome}`);
+            if (row.bestHook) lines.push(`BEST HOOK: ${row.bestHook}`);
+            lines.push('TRANSCRIPT EVIDENCE:');
+            lines.push(row.transcriptContext.slice(0, maxCharsPerVideo));
+            lines.push('---');
+            return lines.join('\n');
+        })
         .join('\n\n');
 }
 
@@ -961,11 +999,15 @@ export async function POST(request: Request) {
                         const keySteps = Array.isArray(card?.keySteps)
                             ? (card?.keySteps as string[]).slice(0, 8)
                             : (Array.isArray(card?.keyBullets) ? (card?.keyBullets as string[]).slice(0, 8) : []);
+                        const whoItsFor = typeof card?.whoItsFor === 'string' ? card.whoItsFor.slice(0, 200) : '';
+                        const outcome = typeof card?.outcome === 'string' ? card.outcome.slice(0, 200) : '';
+                        const bestHook = typeof card?.bestHook === 'string' ? card.bestHook.slice(0, 200) : '';
                         const transcriptContext = buildTranscriptContext(
                             transcript?.transcript_text,
                             chunksByVideo.get(videoId) || [],
                             queryTokens,
-                            MAX_TRANSCRIPT_CONTEXT_CHARS
+                            MAX_TRANSCRIPT_CONTEXT_CHARS,
+                            topicQuery
                         );
 
                         if (!transcriptContext) return null;
@@ -976,6 +1018,9 @@ export async function POST(request: Request) {
                             views,
                             topicTags,
                             keySteps,
+                            whoItsFor,
+                            outcome,
+                            bestHook,
                             transcriptContext,
                         };
                     })
@@ -985,6 +1030,9 @@ export async function POST(request: Request) {
                         views: number;
                         topicTags: string[];
                         keySteps: string[];
+                        whoItsFor: string;
+                        outcome: string;
+                        bestHook: string;
                         transcriptContext: string;
                     } => Boolean(row))
                     .slice(0, MAX_GROUNDED_VIDEOS);
