@@ -85,11 +85,23 @@ interface TopicSuggestionRow {
 }
 
 const TOPIC_STOPWORDS = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'build', 'create', 'course',
-    'content', 'day', 'for', 'from', 'get', 'guide', 'has', 'have', 'how', 'in', 'into', 'is',
-    'it', 'its', 'lesson', 'make', 'mini', 'my', 'now', 'of', 'on', 'or', 'our', 'pdf', 'real',
-    'that', 'the', 'their', 'them', 'they', 'this', 'to', 'toolkit', 'video', 'videos', 'what',
-    'with', 'your',
+    'a', 'all', 'also', 'an', 'and', 'any', 'anyone', 'are', 'as', 'at', 'be', 'been', 'being',
+    'best', 'build', 'can', 'come', 'content', 'could', 'course', 'create', 'day', 'did', 'do',
+    'does', 'doing', 'done', 'each', 'end', 'even', 'every', 'feel', 'feeling', 'find', 'first',
+    'for', 'from', 'get', 'getting', 'give', 'go', 'going', 'gonna', 'got', 'guide', 'had',
+    'has', 'have', 'having', 'help', 'here', 'him', 'his', 'how', 'if', 'in', 'interested',
+    'into', 'is', 'it', 'its', 'just', 'keep', 'know', 'last', 'left', 'lesson', 'let', 'life',
+    'like', 'look', 'looking', 'lot', 'make', 'making', 'many', 'may', 'me', 'mean', 'might',
+    'mini', 'more', 'most', 'much', 'my', 'need', 'never', 'new', 'next', 'not', 'now', 'of',
+    'off', 'on', 'one', 'only', 'or', 'other', 'our', 'out', 'own', 'part', 'pdf', 'people',
+    'person', 'put', 'question', 'questions', 'really', 'reason', 'right', 'said', 'same', 'say',
+    'see', 'she', 'should', 'show', 'so', 'some', 'someone', 'something', 'still', 'stop',
+    'stuff', 'take', 'talk', 'talking', 'tell', 'than', 'that', 'the', 'their', 'them', 'then',
+    'there', 'these', 'they', 'thing', 'things', 'think', 'thinking', 'this', 'those', 'time',
+    'to', 'too', 'toolkit', 'try', 'trying', 'two', 'understand', 'understanding', 'up', 'us',
+    'use', 'using', 'very', 'video', 'videos', 'want', 'was', 'way', 'we', 'well', 'were',
+    'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'work', 'working', 'would',
+    'year', 'years', 'you', 'your',
 ]);
 
 const TOPIC_GENERIC_SINGLE_WORDS = new Set([
@@ -101,6 +113,23 @@ const TOPIC_GENERIC_LABELS = new Set([
     'general content',
     'misc',
     'miscellaneous',
+    'people interested',
+    'anyone interested',
+    'someone interested',
+    'critical thinking',
+    'understanding why',
+    'important thing',
+    'important things',
+    'great way',
+    'good way',
+    'best way',
+    'common mistake',
+    'common mistakes',
+    'real talk',
+    'true story',
+    'biggest mistake',
+    'biggest problem',
+    'number one',
 ]);
 
 function normalizeWhitespace(value: string | null | undefined, maxLen = 160): string | null {
@@ -197,6 +226,11 @@ function normalizeTopicPhrase(input: string, creatorNoise: Set<string>): string 
 
     if (tokens.length === 0) return null;
     if (tokens.length === 1 && TOPIC_GENERIC_SINGLE_WORDS.has(tokens[0])) return null;
+    // Reject 2-word phrases where both words are very common — they're almost always junk
+    if (tokens.length <= 2) {
+        const phrase = tokens.join(' ');
+        if (TOPIC_GENERIC_LABELS.has(phrase)) return null;
+    }
 
     return tokens.slice(0, 5).join(' ');
 }

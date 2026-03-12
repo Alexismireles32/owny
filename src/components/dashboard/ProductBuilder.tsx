@@ -100,7 +100,12 @@ const DEFAULT_PANEL_WIDTH = 380;
 const TOPIC_STOPWORDS = new Set([
     'your', 'you', 'create', 'make', 'guide', 'video', 'videos', 'content',
     'library', 'topic', 'topics', 'best', 'real', 'the', 'and', 'for', 'from',
-    'owny', 'official',
+    'owny', 'official', 'people', 'person', 'interested', 'anyone', 'someone',
+    'understanding', 'thinking', 'things', 'thing', 'really', 'just', 'like',
+    'know', 'think', 'going', 'want', 'need', 'look', 'feel', 'way', 'time',
+    'life', 'work', 'working', 'talk', 'talking', 'try', 'trying', 'stuff',
+    'question', 'questions', 'important', 'common', 'biggest', 'good', 'great',
+    'number', 'why', 'how', 'what', 'who', 'when', 'where', 'which',
 ]);
 
 /* ──────────────────── Helpers ──────────────────────── */
